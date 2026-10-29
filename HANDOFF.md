@@ -3,7 +3,7 @@
 A full-Quran reader for AR glasses, used while praying. It shows Uthmani text on a pure-black stage. Black pixels render as transparent on the glasses' birdbath optics, so only the verses glow and the room stays visible. The reader can follow the reciter's voice, highlight the current ayah and word, and turn pages by itself. Surahs can be picked from inside the glasses.
 
 Owner: Salo. Personal project, not work for his employer.
-Hardware: **VITURE Pro 2** (birdbath optics, 3DoF IMU, no camera, no onboard computer). It is a wired display over USB-C and needs a host: a laptop, or a phone with DisplayPort Alt Mode.
+Hardware: the owner calls them **VITURE Pro 2**, but over USB they enumerate as `35CA:101D` = **VITURE Pro (Gen1)**, the exact device the viture-webxr-extension driver was confirmed on. Birdbath optics, 3DoF IMU, no camera, no onboard computer. It is a wired display over USB-C and needs a host: a laptop, or a phone with DisplayPort Alt Mode.
 
 ---
 
