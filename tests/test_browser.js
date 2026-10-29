@@ -35,6 +35,10 @@ const t = (name, got, want) => {
     t("starts at Fatiha", await head(), "سورة الفاتحة · الآيات ١–٣ من ٧");
     await p.evaluate(() => QuranGlasses.hear("الحمد لله رب العالمين"));
     t("highlights 1:2", await p.evaluate(() => document.querySelector(".ay.cur")?.dataset.a), "2");
+    // while waiting for the recogniser, the highlight nudges forward at the measured pace but never leaves the ayah
+    await p.evaluate(() => { QuranGlasses.hear("الحمد لله"); listening = true; lastReal.t = performance.now() - 1200; }); await p.waitForTimeout(300);
+    t("predictive nudge stays in ayah", await p.evaluate(() => { const w = document.querySelector(".w.now"); return [w?.closest(".ay").dataset.a, +w?.dataset.i - lastReal.idx]; }), ["2", 1]);
+    await p.evaluate(() => { listening = false; });
     await p.evaluate(() => QuranGlasses.hear("الرحمن الرحيم مالك يوم الدين"));
     t("auto page turn", await head(), "سورة الفاتحة · الآيات ٤–٦ من ٧");
     await p.evaluate(() => QuranGlasses.hear("سورة الكهف"));

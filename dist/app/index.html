@@ -110,8 +110,8 @@ details.api pre {
 .head { text-align: center; font-size: .62em; color: var(--muted); font-family: var(--f-ui); letter-spacing: .02em; margin-bottom: .2em; line-height: 1.6; }
 .basmala { text-align: center; text-align-last: center; }
 .mark { color: var(--accent); font-size: .85em; white-space: nowrap; padding-inline: .15em; }
-.ay { cursor: pointer; transition: opacity .2s ease; }
-.w { transition: color .15s ease; border-radius: 4px; }
+.ay { cursor: pointer; transition: opacity .1s ease; }
+.w { border-radius: 4px; }   /* no transition: the highlight must land the instant a word is heard */
 /* while voice tracking: dim everything except the ayah being recited (dim = darker = more see-through) */
 .tracking .ay { opacity: .45; }
 .tracking .ay.cur { opacity: 1; }
@@ -710,7 +710,31 @@ function highlight() {
   });
 }
 
+/* Pace: words per second measured between real recogniser updates, used to nudge the highlight
+   forward while waiting for the next update (the recogniser trails speech by a few hundred ms). */
+let pace = 1.6, lastReal = null;
+function notePace(i) {
+  const now = performance.now();
+  if (lastReal && i > lastReal.idx && i - lastReal.idx <= 12 && now - lastReal.t > 200) {
+    const r = (i - lastReal.idx) / ((now - lastReal.t) / 1000);
+    pace = Math.min(4, Math.max(0.6, pace * 0.6 + r * 0.4));
+  }
+  lastReal = { idx: i, t: now };
+}
+function predictAhead() {
+  if (!listening || !lastReal || curIdx < 0 || pick !== null) return;
+  const dt = (performance.now() - lastReal.t) / 1000;
+  if (dt > 2.5) return;                                             // silence: stop guessing
+  const ahead = Math.min(2, Math.floor(pace * dt * 0.8));           // stay a little behind speech
+  let want = lastReal.idx + ahead;
+  const a0 = Engine.pos(lastReal.idx);
+  while (want > lastReal.idx && (Engine.pos(want).s !== a0.s || Engine.pos(want).a !== a0.a)) want--;   // never past the ayah
+  if (want !== curIdx) { curIdx = want; highlight(); }
+}
+setInterval(predictAhead, 120);
+
 function setPos(i) {
+  notePace(i);
   curIdx = i; cursor = i + 1; miss = 0;
   const p = Engine.pos(i);
   if (p.s !== S.s) {

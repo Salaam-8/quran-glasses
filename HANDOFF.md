@@ -18,7 +18,7 @@ assets/               Amiri Quran woff2 (SIL OFL), app icons
 build.py              builds dist/ (standard library only)
 tests/test_engine.js  34 matcher tests against the real text (node, no deps)
 tests/test_viture.js  38 IMU driver tests: byte-exact frames, quaternion → head angle (node, no deps)
-tests/test_browser.js 26 end-to-end tests, desktop + emulated phone (needs playwright)
+tests/test_browser.js 27 end-to-end tests, desktop + emulated phone (needs playwright)
 dist/                 build output (committed so GitHub Pages can serve dist/app)
 ```
 
@@ -62,7 +62,7 @@ Outputs:
 
 ## Not done / open items (priority order)
 
-1. ~~Host the PWA on GitHub Pages.~~ **Done (2026-10-29).** Private repo `Salaam-8/quran-glasses`, published by `.github/workflows/pages.yml` (Pages source = GitHub Actions) on every push to `main`. Live: https://salaam-8.github.io/quran-glasses/ ; manifest and sw.js verified 200 in Chrome. Bump `CACHE` in `build.py` on every deploy (now v14).
+1. ~~Host the PWA on GitHub Pages.~~ **Done (2026-10-29).** Private repo `Salaam-8/quran-glasses`, published by `.github/workflows/pages.yml` (Pages source = GitHub Actions) on every push to `main`. Live: https://salaam-8.github.io/quran-glasses/ ; manifest and sw.js verified 200 in Chrome. Bump `CACHE` in `build.py` on every deploy (now v15).
 2. **Glasses IMU: implemented, needs a real-device check.** `src/viture.js` talks to the glasses over WebHID
    without the vendor SDK (its browser build has no public download). Protocol sources:
    - Gen2 / Pro 2 (`35CA:1301`): https://github.com/elasticjava/viture-v2/blob/main/PROTOCOL.md — one HID interface,
@@ -95,6 +95,9 @@ Outputs:
      echoes common words ahead no longer jumps the cursor.
    - Lost (whole-Quran) search now needs two consecutive misses, or one miss with ≥5 heard words.
    - Recognition restart gap after `onend` cut from 250 ms to 50 ms (Android ends recognition after every pause).
+   - Predictive nudge: the pace (words/s) is measured between real recogniser updates; while waiting for the next
+     update the `.now` word advances at 0.8× that pace, at most 2 words and never past the current ayah, then snaps to
+     the real position. Word highlight CSS transitions removed. The owner still felt a slight lag before this change.
    Still inherent: Chrome sends audio to Google, so ~0.5–1 s latency and a start beep on Android remain. Next step
    if still not good enough: on-device `tarteel-ai/whisper-base-ar-quran` (Apache-2.0, WER ≈ 5.75%) in a native app,
    or lowering `sim` thresholds after collecting real transcripts (log `#heard` text during a real session).
