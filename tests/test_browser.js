@@ -1,0 +1,82 @@
+// End-to-end checks in headless Chromium (needs: npm i -D playwright && npx playwright install chromium)
+// Run after `py build.py`:  node tests/test_browser.js
+const { chromium, devices } = require("playwright");
+const http = require("http");
+const fs = require("fs");
+const path = require("path");
+
+const APP = path.join(__dirname, "..", "dist", "app");
+const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".png": "image/png", ".webmanifest": "application/manifest+json" };
+const server = http.createServer((req, res) => {
+  const f = path.join(APP, req.url === "/" ? "index.html" : decodeURIComponent(req.url.slice(1)));
+  fs.readFile(f, (err, buf) => {
+    if (err) { res.writeHead(404); return res.end(); }
+    res.writeHead(200, { "Content-Type": TYPES[path.extname(f)] || "application/octet-stream" }); res.end(buf);
+  });
+});
+
+let pass = 0, fail = 0;
+const t = (name, got, want) => {
+  const ok = got === want; ok ? pass++ : fail++;
+  console.log(`${ok ? "PASS" : "FAIL"} ${name} → ${got}${ok ? "" : ` (want ${want})`}`);
+};
+
+(async () => {
+  await new Promise(r => server.listen(0, r));
+  const url = `http://localhost:${server.address().port}/`;
+  const b = await chromium.launch();
+
+  // ---- desktop: voice tracking (simulated text), commands, picker, keys ----
+  {
+    const p = await b.newPage({ viewport: { width: 1280, height: 800 } });
+    const errs = []; p.on("pageerror", e => errs.push(e.message));
+    await p.goto(url); await p.evaluate(() => localStorage.clear()); await p.reload(); await p.waitForTimeout(500);
+    const head = () => p.textContent(".head");
+    t("starts at Fatiha", await head(), "سورة الفاتحة · الآيات ١–٣ من ٧");
+    await p.evaluate(() => QuranGlasses.hear("الحمد لله رب العالمين"));
+    t("highlights 1:2", await p.evaluate(() => document.querySelector(".ay.cur")?.dataset.a), "2");
+    await p.evaluate(() => QuranGlasses.hear("الرحمن الرحيم مالك يوم الدين"));
+    t("auto page turn", await head(), "سورة الفاتحة · الآيات ٤–٦ من ٧");
+    await p.evaluate(() => QuranGlasses.hear("سورة الكهف"));
+    t("voice command surah", await head(), "سورة الكهف · الآيات ١–٣ من ١١٠");
+    await p.evaluate(() => { QuranGlasses.hear("تبارك الذي بيده الملك"); QuranGlasses.hear("تبارك الذي بيده الملك وهو على كل شيء قدير"); });
+    t("finds another surah by recitation", await head(), "سورة الملك · الآيات ١–٣ من ٣٠");
+    await p.keyboard.press("KeyS"); await p.keyboard.press("Digit3"); await p.keyboard.press("Digit6");
+    t("picker by number", (await p.textContent(".picker .sel")).includes("يس"), true);
+    await p.keyboard.press("Enter");
+    t("picker opens surah", await head(), "سورة يس · الآيات ١–٣ من ٨٣");
+    t("picker closed", await p.isVisible("#picker"), false);
+    await p.keyboard.press("PageDown");
+    t("PageDown next page", await head(), "سورة يس · الآيات ٤–٦ من ٨٣");
+    t("no page errors", errs.length, 0);
+    await p.close();
+  }
+
+  // ---- phone (landscape, touch) ----
+  {
+    const ctx = await b.newContext({ ...devices["Pixel 7 landscape"] });
+    const p = await ctx.newPage();
+    await p.goto(url); await p.evaluate(() => localStorage.clear()); await p.reload(); await p.waitForTimeout(500);
+    const head = () => p.textContent(".head");
+    const ptr = (type, x, y) => p.evaluate(([type, x, y]) =>
+      document.getElementById("stage").dispatchEvent(new PointerEvent(type, { pointerType: "touch", clientX: x, clientY: y, bubbles: true })), [type, x, y]);
+    const tap = async (x, y) => { await ptr("pointerdown", x, y); await ptr("pointerup", x, y); };
+    const swipe = async (x1, y1, x2, y2) => { await ptr("pointerdown", x1, y1); await ptr("pointermove", (x1 + x2) / 2, (y1 + y2) / 2); await ptr("pointerup", x2, y2); };
+    await p.click("#focus"); await p.waitForTimeout(200);
+    const W = await p.evaluate(() => document.getElementById("stage").clientWidth);
+    await tap(W * 0.1, 250); t("tap left = next", await head(), "سورة الفاتحة · الآيات ٤–٦ من ٧");
+    await tap(W * 0.9, 250); t("tap right = prev", await head(), "سورة الفاتحة · الآيات ١–٣ من ٧");
+    await swipe(200, 250, 500, 250); t("swipe right = next", await head(), "سورة الفاتحة · الآيات ٤–٦ من ٧");
+    await swipe(500, 250, 200, 250); t("swipe left = prev", await head(), "سورة الفاتحة · الآيات ١–٣ من ٧");
+    await tap(W * 0.5, 250); t("center tap shows buttons", await p.isVisible("#corner"), true);
+    await ptr("pointerdown", W * 0.5, 250); await p.waitForTimeout(700); await ptr("pointerup", W * 0.5, 250);
+    t("long press opens picker", await p.isVisible("#picker"), true);
+    await swipe(400, 300, 400, 150); await swipe(400, 300, 400, 150);
+    await p.click(".picker .sel"); t("swipe + tap picks surah", await head(), "سورة آل عمران · الآيات ١–٣ من ٢٠٠");
+    await ctx.close();
+  }
+
+  await b.close(); server.close();
+  console.log(`${pass} pass, ${fail} fail`);
+  if (fail) process.exit(1);
+})();

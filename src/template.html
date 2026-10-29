@@ -1,0 +1,584 @@
+<title>مصحف النظارة</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Amiri+Quran&family=Readex+Pro:wght@300;400;600&display=swap">
+<style>
+/* Layout: control bar on top, reading stage below. On birdbath glasses pure black renders as transparent,
+   so the stage stays #000 and only the verse text emits light. Deliberately single dark theme. */
+:root {
+  --void: #000000;          /* transparent on the glasses */
+  --panel: #0d1210;
+  --line: #1f2a25;
+  --ink: #e9efe9;
+  --muted: #8a9a91;
+  --verse: #f3f1e7;         /* user-selectable */
+  --accent: #6fcf97;        /* mihrab green */
+  --warn: #e0b45c;
+  --f-quran: "Amiri Quran Embedded", "Amiri Quran", "Amiri", "Scheherazade New", "Traditional Arabic", serif;
+  --f-ui: "Readex Pro", "Segoe UI", Tahoma, system-ui, sans-serif;
+  --f-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  color-scheme: dark;
+}
+/* Amiri Quran embedded (SIL OFL 1.1) so Quranic marks render offline and on any system */
+@font-face { font-family: "Amiri Quran Embedded"; src: url(data:font/woff2;base64,/*FONT_B64*/) format("woff2"); font-display: block; }
+[hidden] { display: none !important; }
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  background: var(--void); color: var(--ink); font-family: var(--f-ui); font-size: 14px;
+  margin: 0; display: flex; flex-direction: column; overflow: hidden;
+}
+button, select, input { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ---------- control bar ---------- */
+.bar {
+  background: var(--panel); border-bottom: 1px solid var(--line);
+  padding-block: 10px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: flex; flex-direction: column; gap: 10px; max-height: 58vh; overflow-y: auto;
+}
+.row { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; }
+.sep { border-top: 1px dashed var(--line); padding-top: 10px; }
+.brand { font-weight: 600; letter-spacing: .02em; margin-inline-end: auto; display: flex; gap: 8px; align-items: baseline; }
+.brand small { color: var(--muted); font-weight: 300; }
+label.f { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12.5px; }
+select, input[type=number] {
+  background: var(--void); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; color: var(--ink);
+}
+input[type=number] { width: 64px; font-variant-numeric: tabular-nums; }
+input[type=range] { accent-color: var(--accent); width: 110px; }
+input[type=checkbox] { accent-color: var(--accent); }
+.btn { background: transparent; border: 1px solid var(--line); border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+.btn:hover { border-color: var(--accent); }
+.btn.primary { background: var(--accent); color: #06130c; border-color: var(--accent); font-weight: 600; }
+.btn.live { border-color: var(--accent); color: var(--accent); }
+.swatches { display: flex; gap: 6px; }
+.sw { width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--line); cursor: pointer; padding: 0; }
+.sw[aria-pressed=true] { border-color: var(--ink); }
+kbd { font-family: var(--f-mono); font-size: 11px; border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; color: var(--ink); }
+
+.chip { font-size: 12px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--line); white-space: nowrap; color: var(--muted); }
+.chip.show { color: var(--accent); border-color: var(--accent); }
+.chip.hide { color: var(--warn); border-color: var(--warn); }
+.heard { flex: 1 1 220px; min-width: 0; color: var(--muted); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl; }
+.heard:empty::before { content: "الكلام المسموع يظهر هنا"; opacity: .5; }
+.num { font-family: var(--f-mono); font-variant-numeric: tabular-nums; color: var(--ink); min-width: 4.5ch; display: inline-block; text-align: end; direction: ltr; }
+.gauge { position: relative; width: 160px; height: 8px; border-radius: 4px; background: var(--line); direction: ltr; }
+.gauge i { position: absolute; top: -3px; width: 2px; height: 14px; background: var(--muted); }
+.gauge b { position: absolute; top: -4px; width: 10px; height: 16px; border-radius: 3px; background: var(--accent); transform: translateX(-5px); }
+details.api { color: var(--muted); font-size: 12px; }
+details.api summary { cursor: pointer; }
+details.api pre {
+  direction: ltr; text-align: left; background: var(--void); border: 1px solid var(--line); border-radius: 6px;
+  padding: 10px; overflow-x: auto; color: var(--ink); font-family: var(--f-mono); font-size: 12px; margin: 8px 0 0;
+}
+
+/* ---------- stage ---------- */
+.stage {
+  flex: 1; min-height: 0; position: relative; background: var(--void);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.text {
+  position: absolute; left: 0; right: 0; bottom: var(--offset, 8%);
+  margin-inline: auto; width: min(92%, 62em);
+  padding-inline: max(16px, env(safe-area-inset-left, 0px));
+  font-family: var(--f-quran); color: var(--verse); font-size: var(--size, 34px);
+  line-height: 2.1; text-align: justify; text-align-last: center; direction: rtl;
+  opacity: var(--glow, 1); transition: opacity .25s ease;
+}
+.text.off { opacity: 0; }
+.head { text-align: center; font-size: .62em; color: var(--muted); font-family: var(--f-ui); letter-spacing: .02em; margin-bottom: .2em; line-height: 1.6; }
+.basmala { text-align: center; text-align-last: center; }
+.mark { color: var(--accent); font-size: .85em; white-space: nowrap; padding-inline: .15em; }
+.ay { cursor: pointer; transition: opacity .2s ease; }
+.w { transition: color .15s ease; border-radius: 4px; }
+/* while voice tracking: dim everything except the ayah being recited (dim = darker = more see-through) */
+.tracking .ay { opacity: .45; }
+.tracking .ay.cur { opacity: 1; }
+.tracking .ay.cur .w.said { color: color-mix(in srgb, var(--verse) 70%, var(--accent)); }
+.w.now { color: var(--accent); text-decoration: underline; text-decoration-thickness: .06em; text-underline-offset: .35em; }
+
+.hint {
+  position: absolute; top: 12px; inset-inline-start: max(16px, env(safe-area-inset-left, 0px));
+  color: var(--muted); font-size: 12px; opacity: .6; display: flex; gap: 10px; flex-wrap: wrap;
+}
+.micdot {
+  position: absolute; top: 14px; inset-inline-end: max(16px, env(safe-area-inset-right, 0px));
+  width: 10px; height: 10px; border-radius: 50%; background: var(--accent); opacity: .5;
+}
+.micdot.blink { opacity: 1; }
+.toast {
+  position: absolute; top: 12%; left: 50%; transform: translateX(-50%);
+  font-family: var(--f-ui); font-size: 22px; color: var(--accent); white-space: nowrap;
+  opacity: 0; transition: opacity .3s ease; pointer-events: none;
+}
+.toast.on { opacity: 1; }
+
+/* surah picker, readable inside the glasses */
+.picker {
+  position: absolute; inset-inline: 0; bottom: var(--offset, 8%); margin-inline: auto; width: min(92%, 30em);
+  display: flex; flex-direction: column; align-items: center; gap: 2px; direction: rtl;
+}
+.picker .ttl { font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+.picker button {
+  background: none; border: 0; cursor: pointer; color: var(--muted); font-family: var(--f-ui);
+  font-size: 18px; padding: 2px 10px; display: flex; gap: 12px; align-items: baseline;
+}
+.picker button .n { font-family: var(--f-mono); font-variant-numeric: tabular-nums; font-size: .8em; }
+.picker button .c { font-size: .7em; opacity: .7; }
+.picker button.sel { color: var(--accent); font-size: 30px; font-family: var(--f-quran); }
+.picker button.sel .n, .picker button.sel .c { font-family: var(--f-ui); }
+.picker .far { opacity: .45; }
+.picker .typed { font-family: var(--f-mono); color: var(--warn); min-height: 1.4em; font-size: 16px; }
+
+/* touch: the stage takes swipes, taps and long-press itself */
+.stage { touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+.corner {
+  position: absolute; top: calc(10px + env(safe-area-inset-top, 0px)); left: 50%; transform: translateX(-50%);
+  display: flex; gap: 8px; z-index: 5;
+}
+.corner button {
+  background: var(--void); border: 1px solid var(--line); color: var(--muted); border-radius: 8px;
+  padding: 10px 16px; min-height: 44px; font-family: var(--f-ui); font-size: 15px; cursor: pointer;
+}
+.corner button.live { color: var(--accent); border-color: var(--accent); }
+@media (hover: none) { .hint { display: none; } }
+
+.focus-mode .bar, .focus-mode .hint { display: none; }
+.focus-mode .head { color: color-mix(in srgb, var(--verse) 45%, black); }
+@media (prefers-reduced-motion: reduce) { .text, .toast, .ay, .w { transition: none; } }
+@media (max-width: 560px) { .gauge { width: 110px; } .brand small { display: none; } }
+</style>
+
+<header class="bar" id="bar">
+  <div class="row">
+    <div class="brand">مصحف النظارة <small>VITURE Pro 2 · نموذج أولي</small></div>
+    <label class="f">السورة <select id="surah"></select></label>
+    <label class="f">من آية <input id="ayah" type="number" min="1" value="1"></label>
+    <button class="btn" id="prev" title="الصفحة السابقة">السابق</button>
+    <button class="btn" id="next" title="الصفحة التالية">التالي</button>
+    <button class="btn" id="pickBtn" title="قائمة السور (S)">قائمة السور</button>
+    <button class="btn primary" id="focus" title="وضع النظارة (G)">وضع النظارة</button>
+  </div>
+
+  <div class="row sep">
+    <button class="btn" id="mic" title="تشغيل وإيقاف تتبع الصوت (V)">تشغيل تتبّع الصوت</button>
+    <span class="chip" id="micState">الصوت متوقف</span>
+    <label class="f"><input id="follow" type="checkbox" checked> قلب الصفحة مع القراءة</label>
+    <div class="heard" id="heard"></div>
+  </div>
+
+  <div class="row sep">
+    <label class="f">آيات بالصفحة <input id="per" type="number" min="1" max="15" value="3"></label>
+    <label class="f">حجم الخط <input id="size" type="range" min="20" max="72" value="34"></label>
+    <label class="f">الارتفاع <input id="offset" type="range" min="0" max="60" value="8"></label>
+    <label class="f">السطوع <input id="glow" type="range" min="20" max="100" value="100"></label>
+    <div class="swatches" role="group" aria-label="لون النص">
+      <button class="sw" data-c="#f3f1e7" style="background:#f3f1e7" aria-label="أبيض"></button>
+      <button class="sw" data-c="#7fe0a6" style="background:#7fe0a6" aria-label="أخضر"></button>
+      <button class="sw" data-c="#f0c477" style="background:#f0c477" aria-label="كهرماني"></button>
+    </div>
+  </div>
+
+  <div class="row sep">
+    <span class="chip show" id="state">قيام · النص ظاهر</span>
+    <span>ميلان الرأس <span class="num" id="pitchv">0°</span></span>
+    <div class="gauge" aria-hidden="true"><i id="gHide"></i><i id="gShow"></i><b id="gNow"></b></div>
+    <label class="f">محاكاة <input id="sim" type="range" min="-100" max="20" value="-15"></label>
+    <button class="btn" id="calib" title="قف وانظر لموضع السجود ثم اضغط">معايرة وضع القيام</button>
+    <label class="f"><input id="auto" type="checkbox" checked> إخفاء تلقائي بالركوع والسجود</label>
+    <label class="f"><input id="advance" type="checkbox"> الصفحة التالية بعد السجود</label>
+    <span class="f" id="src">المصدر: محاكاة</span>
+  </div>
+
+  <details class="api">
+    <summary>الاختصارات وربط حساس النظارة</summary>
+    <pre>←  مسافة  PageDown     الصفحة التالية
+→  PageUp              الصفحة السابقة
+S  .  B                فتح قائمة السور (داخل القائمة: الأسهم أو PageUp/PageDown للتنقل، Enter أو . للاختيار، أو اكتب رقم السورة)
+V                      تشغيل وإيقاف تتبّع الصوت
+G                      وضع النظارة
+بالصوت: قل «سورة الكهف» لفتح أي سورة، أو ابدأ القراءة وتلقى الصفحة موضعك
+
+// ربط IMU: استدعِ هذا من callback الخاص بـ VITURE SDK مع كل قراءة
+// pitch بالدرجات: 0 = النظر للأمام، السالب = خفض الرأس
+window.QuranGlasses.pushPose({ pitch: -18.4 });</pre>
+  </details>
+</header>
+
+<main class="stage" id="stage">
+  <div class="hint" id="hint"><span><kbd>G</kbd> وضع النظارة</span><span><kbd>S</kbd> السور</span><span><kbd>V</kbd> الصوت</span><span><kbd>←</kbd> <kbd>→</kbd> التقليب</span></div>
+  <div class="micdot" id="micdot" hidden></div>
+  <nav class="corner" id="corner" hidden>
+    <button id="cExit">خروج</button>
+    <button id="cList">السور</button>
+    <button id="cMic">الصوت</button>
+  </nav>
+  <div class="toast" id="toast"></div>
+  <article class="text" id="text" aria-live="polite"></article>
+  <div class="picker" id="picker" hidden></div>
+</main>
+
+<script>
+/*ENGINE*/
+</script>
+<script>
+const Q = /*QURAN_DATA*/[];
+Engine.build(Q);
+const $ = id => document.getElementById(id);
+const AR = n => String(n).replace(/\d/g, d => "٠١٢٣٤٥٦٧٨٩"[d]);
+
+/* ---------- settings (per-viewer convenience only) ---------- */
+const store = {
+  get() { try { return JSON.parse(localStorage.getItem("qg") || "{}"); } catch { return {}; } },
+  set(v) { try { localStorage.setItem("qg", JSON.stringify(v)); } catch {} }
+};
+const S = Object.assign({ s: 1, a: 1, per: 3, size: 34, offset: 8, glow: 100, color: "#f3f1e7", base: -15,
+  auto: true, advance: false, follow: true }, store.get());
+const save = () => store.set(S);
+
+let toastT;
+function toast(msg) {
+  const t = $("toast"); t.textContent = msg; t.classList.add("on");
+  clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("on"), 2200);
+}
+
+/* ---------- reader ---------- */
+const surahSel = $("surah");
+Q.forEach((s, i) => surahSel.add(new Option(`${AR(i + 1)}. ${s[0]}`, i + 1)));
+const pageEnd = () => Math.min(Q[S.s - 1][1].length, S.a + S.per - 1);
+
+function render() {
+  const total = Q[S.s - 1][1].length;
+  S.a = Math.min(Math.max(1, S.a), total);
+  const [name, verses] = Q[S.s - 1];
+  const end = pageEnd();
+  let html = `<div class="head">سورة ${name} · الآيات ${AR(S.a)}–${AR(end)} من ${AR(total)}</div>`;
+  if (S.a === 1 && S.s !== 1 && S.s !== 9) html += `<div class="basmala">${Q[0][1][0]}</div>`;
+  for (let a = S.a; a <= end; a++) {
+    const toks = verses[a - 1].split(" "), idx = Engine.tokens(S.s, a);
+    const words = toks.map((t, k) => idx[k] >= 0 ? `<span class="w" data-i="${idx[k]}">${t}</span>` : t).join(" ");
+    html += `<span class="ay" data-a="${a}">${words}&nbsp;<span class="mark">﴿${AR(a)}﴾</span></span> `;
+  }
+  $("text").innerHTML = html;
+  surahSel.value = S.s; $("ayah").value = S.a; $("ayah").max = total;
+  highlight(); save();
+}
+
+/* ---------- voice tracking ---------- */
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let rec = null, listening = false, cursor = 0, curIdx = -1, miss = 0, finalBuf = "";
+
+function resync(a = S.a) { cursor = Engine.first(S.s, a); curIdx = -1; miss = 0; finalBuf = ""; }
+
+function highlight() {
+  const box = $("text");
+  box.classList.toggle("tracking", listening && curIdx >= 0);
+  box.querySelectorAll(".cur, .now, .said").forEach(e => e.classList.remove("cur", "now", "said"));
+  if (curIdx < 0) return;
+  const p = Engine.pos(curIdx);
+  if (p.s !== S.s) return;
+  const ay = box.querySelector(`.ay[data-a="${p.a}"]`);
+  if (!ay) return;
+  ay.classList.add("cur");
+  ay.querySelectorAll(".w").forEach(w => {
+    const i = +w.dataset.i;
+    if (i < curIdx) w.classList.add("said");
+    else if (i === curIdx) w.classList.add("now");
+  });
+}
+
+function setPos(i) {
+  curIdx = i; cursor = i + 1; miss = 0;
+  const p = Engine.pos(i);
+  if (p.s !== S.s) {
+    S.s = p.s; S.a = p.a; render();
+    toast("سورة " + Q[p.s - 1][0]);
+    return;
+  }
+  // when the recited ayah is the last one on the page, move the page so the next ayahs are visible
+  if (S.follow && (p.a < S.a || p.a > pageEnd() || (p.a === pageEnd() && p.a < Q[S.s - 1][1].length))) {
+    S.a = p.a; render();
+  } else highlight();
+}
+
+function gotoSurah(n, announce = true) {
+  S.s = n; S.a = 1; render(); resync();
+  if (announce) toast("سورة " + Q[n - 1][0]);
+}
+
+function onHeard(text, isFinal, latest) {
+  $("heard").textContent = text.trim().split(/\s+/).slice(-12).join(" ");
+  const dot = $("micdot"); dot.classList.add("blink"); setTimeout(() => dot.classList.remove("blink"), 150);
+  if (isFinal) {
+    const cmd = Engine.surahCommand(latest);
+    if (cmd) { gotoSurah(cmd); return; }
+  }
+  let i = Engine.locate(text, cursor, S.s, "local");
+  if (i == null && isFinal) {
+    miss++;
+    i = Engine.locate(text, cursor, S.s, "lost");
+  }
+  if (i != null) setPos(i);
+}
+
+function micStatus(text, kind) {
+  const c = $("micState"); c.textContent = text; c.className = "chip " + (kind || "");
+  const b = $("mic"); b.textContent = listening ? "إيقاف تتبّع الصوت" : "تشغيل تتبّع الصوت";
+  b.classList.toggle("live", listening);
+  $("cMic").classList.toggle("live", listening);
+  $("cMic").textContent = listening ? "إيقاف الصوت" : "تشغيل الصوت";
+  $("micdot").hidden = !listening;
+}
+
+function startMic() {
+  if (!SR) { micStatus("المتصفح ما يدعم التعرف على الصوت. استخدم Chrome", "hide"); return; }
+  rec = new SR();
+  rec.lang = "ar-SA"; rec.continuous = true; rec.interimResults = true; rec.maxAlternatives = 1;
+  rec.onresult = e => {
+    let interim = "";
+    for (let k = e.resultIndex; k < e.results.length; k++) {
+      const r = e.results[k], tx = r[0].transcript;
+      if (r.isFinal) {
+        finalBuf = (finalBuf + " " + tx).trim().split(/\s+/).slice(-16).join(" ");
+        onHeard(finalBuf, true, tx);
+      } else interim += tx + " ";
+    }
+    if (interim) onHeard(finalBuf + " " + interim, false, interim);
+  };
+  rec.onerror = e => {
+    if (e.error === "not-allowed" || e.error === "service-not-allowed") {
+      listening = false;
+      micStatus("المايك مرفوض. افتح الصفحة من رابطها (https) واسمح للمايك", "hide");
+    } else if (e.error === "network") micStatus("التعرف على الصوت يحتاج إنترنت", "hide");
+    else if (e.error === "audio-capture") { listening = false; micStatus("ما فيه مايك متصل", "hide"); }
+  };
+  rec.onstart = () => micStatus("يستمع…", "show");
+  rec.onend = () => {
+    if (listening) setTimeout(() => { try { rec.start(); } catch {} }, 250);
+    else micStatus("الصوت متوقف");
+  };
+  listening = true; resync(); micStatus("جاري التشغيل…");
+  try { rec.start(); } catch { listening = false; micStatus("ما قدرت أشغّل المايك", "hide"); }
+}
+function stopMic() {
+  listening = false; try { rec && rec.stop(); } catch {}
+  curIdx = -1; highlight(); micStatus("الصوت متوقف");
+}
+const toggleMic = () => { listening ? stopMic() : startMic(); toast(listening ? "تتبّع الصوت شغّال" : "تتبّع الصوت متوقف"); };
+
+/* ---------- manual navigation (always allowed; voice resumes from the new page) ---------- */
+function page(dir) {
+  const len = Q[S.s - 1][1].length;
+  if (dir > 0) {
+    if (S.a + S.per <= len) S.a += S.per;
+    else if (S.s < 114) { S.s++; S.a = 1; toast("سورة " + Q[S.s - 1][0]); }
+  } else {
+    if (S.a > 1) S.a = Math.max(1, S.a - S.per);
+    else if (S.s > 1) { S.s--; const l = Q[S.s - 1][1].length; S.a = Math.max(1, l - S.per + 1); toast("سورة " + Q[S.s - 1][0]); }
+  }
+  resync(); render();
+}
+let lastPointer = "mouse";
+document.addEventListener("pointerdown", e => { lastPointer = e.pointerType; }, true);
+$("text").addEventListener("click", e => {
+  if (lastPointer !== "mouse") return;      // on touch, taps are page-turn zones
+  const ay = e.target.closest(".ay"); if (!ay) return;
+  resync(+ay.dataset.a); curIdx = Engine.first(S.s, +ay.dataset.a); highlight();
+});
+
+/* ---------- surah picker (works inside the glasses with keyboard or a clicker) ---------- */
+let pick = null, typed = "", typedT;
+function drawPicker() {
+  const rows = [];
+  for (let d = -3; d <= 3; d++) {
+    const n = pick + d; if (n < 1 || n > 114) continue;
+    const cls = d === 0 ? "sel" : Math.abs(d) === 3 ? "far" : "";
+    rows.push(`<button class="${cls}" data-n="${n}"><span class="n">${AR(n)}</span>${Q[n - 1][0]}<span class="c">${AR(Q[n - 1][1].length)} آية</span></button>`);
+  }
+  $("picker").innerHTML = `<div class="ttl">اختر السورة · الأسهم للتنقل · Enter للفتح · Esc للإلغاء</div>${rows.join("")}<div class="typed">${typed ? "رقم: " + AR(typed) : ""}</div>`;
+}
+function openPicker() { pick = S.s; typed = ""; drawPicker(); $("picker").hidden = false; $("text").classList.add("off"); }
+function closePicker(ok) {
+  if (ok && pick) gotoSurah(pick);
+  pick = null; $("picker").hidden = true; $("text").classList.toggle("off", !visible);
+}
+function movePick(d) { pick = Math.min(114, Math.max(1, pick + d)); drawPicker(); }
+$("picker").addEventListener("click", e => { const b = e.target.closest("button[data-n]"); if (b) { pick = +b.dataset.n; closePicker(true); } });
+$("picker").addEventListener("wheel", e => { e.preventDefault(); movePick(e.deltaY > 0 ? 1 : -1); }, { passive: false });
+
+/* ---------- appearance ---------- */
+function applyLook() {
+  const r = document.documentElement.style;
+  r.setProperty("--size", S.size + "px");
+  r.setProperty("--offset", S.offset + "%");
+  r.setProperty("--glow", S.glow / 100);
+  r.setProperty("--verse", S.color);
+  document.querySelectorAll(".sw").forEach(b => b.setAttribute("aria-pressed", b.dataset.c === S.color));
+  ["per", "size", "offset", "glow"].forEach(k => $(k).value = S[k]);
+  $("auto").checked = S.auto; $("advance").checked = S.advance; $("follow").checked = S.follow;
+  save();
+}
+
+/* ---------- posture engine ----------
+   Show text while the head is near the calibrated qiyam angle; hide when it drops well below it.
+   Hysteresis + debounce avoid flicker. */
+const SHOW_BAND = 20, HIDE_BAND = 35, DEBOUNCE = 350, SUJOOD_MS = 2500;
+let pitch = S.base, visible = true, pending = null, pendingSince = 0, hiddenAt = 0;
+
+function onPitch(p, source) {
+  pitch = p;
+  if (source) $("src").textContent = "المصدر: " + source;
+  $("pitchv").textContent = p.toFixed(0) + "°";
+  const pos = v => `${((Math.max(-100, Math.min(20, v)) + 100) / 120) * 100}%`;
+  $("gNow").style.left = pos(p); $("gShow").style.left = pos(S.base - SHOW_BAND); $("gHide").style.left = pos(S.base - HIDE_BAND);
+
+  let want = visible;
+  if (p >= S.base - SHOW_BAND) want = true;
+  else if (p <= S.base - HIDE_BAND) want = false;
+  if (!S.auto) want = true;
+
+  const now = performance.now();
+  if (want === visible) { pending = null; return; }
+  if (pending !== want) { pending = want; pendingSince = now; return; }
+  if (now - pendingSince < DEBOUNCE) return;
+
+  visible = want; pending = null;
+  if (!visible) hiddenAt = now;
+  else if (S.advance && !listening && now - hiddenAt >= SUJOOD_MS) page(1);
+  if (pick === null) $("text").classList.toggle("off", !visible);
+  const st = $("state");
+  st.className = "chip " + (visible ? "show" : "hide");
+  st.textContent = visible ? "قيام · النص ظاهر" : "ركوع/سجود · النص مخفي";
+}
+setInterval(() => onPitch(pitch), 100);
+
+window.QuranGlasses = {
+  pushPose({ pitch: p }) { if (typeof p === "number" && isFinite(p)) onPitch(p, "حساس النظارة"); },
+  next: () => page(1), prev: () => page(-1),
+  goto(s, a = 1) { S.s = s; S.a = a; resync(); render(); },
+  hear: text => onHeard(text, true, text)   // for testing without a microphone
+};
+
+/* ---------- wiring ---------- */
+surahSel.onchange = () => gotoSurah(+surahSel.value, false);
+$("ayah").onchange = e => { S.a = +e.target.value || 1; resync(); render(); };
+$("per").onchange = e => { S.per = Math.min(15, Math.max(1, +e.target.value || 1)); render(); applyLook(); };
+$("size").oninput = e => { S.size = +e.target.value; applyLook(); };
+$("offset").oninput = e => { S.offset = +e.target.value; applyLook(); };
+$("glow").oninput = e => { S.glow = +e.target.value; applyLook(); };
+document.querySelectorAll(".sw").forEach(b => b.onclick = () => { S.color = b.dataset.c; applyLook(); });
+$("auto").onchange = e => { S.auto = e.target.checked; save(); };
+$("advance").onchange = e => { S.advance = e.target.checked; save(); };
+$("follow").onchange = e => { S.follow = e.target.checked; save(); };
+$("sim").oninput = e => onPitch(+e.target.value, "محاكاة");
+$("calib").onclick = () => { S.base = Math.round(pitch); save(); onPitch(pitch); $("calib").textContent = `تمت المعايرة (${S.base}°)`; };
+$("prev").onclick = () => page(-1);
+$("next").onclick = () => page(1);
+$("mic").onclick = toggleMic;
+$("pickBtn").onclick = openPicker;
+
+let wake = null;
+async function keepAwake() {
+  try { wake = await navigator.wakeLock?.request("screen"); } catch {}
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && document.body.classList.contains("focus-mode")) keepAwake();
+});
+function toggleFocus() {
+  const on = document.body.classList.toggle("focus-mode");
+  try {
+    if (on && !document.fullscreenElement) {
+      const p = document.documentElement.requestFullscreen?.();
+      // phones: turn to landscape so the glasses get the full wide picture
+      p?.then(() => screen.orientation?.lock?.("landscape")).catch(() => {});
+    }
+    if (!on && document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
+  } catch {}
+  if (on) keepAwake(); else { try { wake?.release(); } catch {} $("corner").hidden = true; }
+}
+$("focus").onclick = toggleFocus;
+
+/* ---------- touch gestures (phone mirroring to the glasses) ----------
+   tap left third: next page · tap right third: previous · swipe right: next · swipe left: previous
+   long-press: surah list · tap middle: show the on-screen buttons */
+let cornerT;
+function showCorner() {
+  if (!document.body.classList.contains("focus-mode")) return;
+  $("corner").hidden = false; clearTimeout(cornerT);
+  cornerT = setTimeout(() => $("corner").hidden = true, 4000);
+  toast(`سورة ${Q[S.s - 1][0]} · ${AR(S.a)}–${AR(pageEnd())}`);
+}
+let g = null, lpT;
+const stage = $("stage");
+stage.addEventListener("pointerdown", e => {
+  if (e.pointerType === "mouse" || e.target.closest(".corner, .picker button")) return;
+  g = { x: e.clientX, y: e.clientY, moved: false, long: false };
+  clearTimeout(lpT);
+  lpT = setTimeout(() => {
+    if (!g || g.moved) return;
+    g.long = true; navigator.vibrate?.(30);
+    pick === null ? openPicker() : closePicker(true);
+  }, 600);
+});
+stage.addEventListener("pointermove", e => {
+  if (g && Math.hypot(e.clientX - g.x, e.clientY - g.y) > 12) { g.moved = true; clearTimeout(lpT); }
+});
+stage.addEventListener("pointercancel", () => { clearTimeout(lpT); g = null; });
+stage.addEventListener("pointerup", e => {
+  clearTimeout(lpT);
+  if (!g || g.long) { g = null; return; }
+  const dx = e.clientX - g.x, dy = e.clientY - g.y, ax = Math.abs(dx), ay = Math.abs(dy);
+  if (pick !== null) {
+    if (ay > 40 && ay > ax) movePick(dy < 0 ? 1 : -1);
+    else if (!g.moved) closePicker(false);
+  } else if (ax > 50 && ax > ay) page(dx > 0 ? 1 : -1);
+  else if (!g.moved) {
+    const w = stage.clientWidth;
+    if (g.x < w * 0.3) page(1);
+    else if (g.x > w * 0.7) page(-1);
+    else showCorner();
+  }
+  g = null;
+});
+$("cExit").onclick = () => toggleFocus();
+$("cList").onclick = () => { $("corner").hidden = true; openPicker(); };
+$("cMic").onclick = () => { toggleMic(); showCorner(); };
+
+if ("serviceWorker" in navigator && location.protocol === "https:" && !location.hostname.endsWith("claude.ai")) {
+  navigator.serviceWorker.register("sw.js").catch(() => {});
+}
+$("stage").ondblclick = e => { if (!e.target.closest(".ay") && document.body.classList.contains("focus-mode")) toggleFocus(); };
+document.addEventListener("fullscreenchange", () => { if (!document.fullscreenElement) document.body.classList.remove("focus-mode"); });
+
+document.addEventListener("keydown", e => {
+  if (e.target.matches("input, select")) return;
+  const c = e.code, k = e.key;
+  if (pick !== null) {                       // picker is open
+    e.preventDefault();
+    if (/^(Digit|Numpad)\d$/.test(c)) {
+      typed = (typed + c.slice(-1)).slice(-3);
+      const n = +typed; if (n >= 1 && n <= 114) pick = n;
+      drawPicker(); clearTimeout(typedT); typedT = setTimeout(() => { typed = ""; drawPicker(); }, 1200);
+    }
+    else if (["ArrowUp", "ArrowRight", "PageUp"].includes(c)) movePick(-1);
+    else if (["ArrowDown", "ArrowLeft", "PageDown", "Space"].includes(c)) movePick(1);
+    else if (["Enter", "NumpadEnter", "KeyS", "KeyB", "Period"].includes(c)) closePicker(true);
+    else if (c === "Escape" || c === "Backspace") closePicker(false);
+    return;
+  }
+  if (["ArrowLeft", "Space", "PageDown"].includes(c)) { e.preventDefault(); page(1); }
+  else if (["ArrowRight", "PageUp"].includes(c)) { e.preventDefault(); page(-1); }
+  else if (["KeyS", "KeyB", "Period"].includes(c)) { e.preventDefault(); openPicker(); }
+  else if (c === "KeyV") toggleMic();
+  else if (c === "KeyG") toggleFocus();
+  else if (k === "Escape") document.body.classList.remove("focus-mode");
+});
+
+$("sim").value = S.base;
+applyLook(); resync(); render(); onPitch(S.base, "محاكاة"); micStatus("الصوت متوقف");
+</script>
