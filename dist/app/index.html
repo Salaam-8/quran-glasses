@@ -214,9 +214,11 @@ details.api pre {
   <div class="row sep">
     <button class="btn" id="hid" title="يطلب Chrome الإذن للوصول إلى النظارة عبر WebHID">ربط حساس النظارة</button>
     <span class="f" id="hidst">غير موصولة</span>
+    <button class="btn" id="learn" title="اضغط وأنت تنظر للأمام، ثم أنزل رأسك كأنك ساجد خلال ٤ ثوانٍ">تعليم حركة السجود</button>
     <label class="f">محور الميلان
       <select id="axis">
-        <option value="gaze">تلقائي: اتجاه النظر</option>
+        <option value="learned">متعلَّم من حركتك</option>
+        <option value="gaze">اتجاه النظر</option>
         <option value="x">زاوية X</option>
         <option value="y">زاوية Y</option>
         <option value="z">زاوية Z</option>
@@ -236,7 +238,9 @@ G                      وضع النظارة
 بالصوت: قل «سورة الكهف» لفتح أي سورة، أو ابدأ القراءة وتلقى الصفحة موضعك
 
 حساس النظارة: زر «ربط حساس النظارة» يطلب الإذن عبر WebHID (Chrome على الكمبيوتر، والصفحة على https).
-بعد الإذن الأول تتصل النظارة تلقائيًا عند فتح الصفحة. إن انعكست الإشارة (النص يختفي عند رفع الرأس) فعّل «عكس الإشارة».
+بعد الإذن الأول تتصل النظارة تلقائيًا عند فتح الصفحة.
+«تعليم حركة السجود»: اضغطه وأنت تنظر للأمام ثم أنزل رأسك خلال ٤ ثوانٍ؛ يتعلم التطبيق محور الإيماءة من حركتك فلا يتأثر بالالتفات يمينًا ويسارًا.
+«معايرة وضع القيام» بعد التعلم تعيد ضبط نقطة الصفر فقط.
 // واجهة برمجية بديلة لأي مصدر آخر للحساس:
 // pitch بالدرجات: 0 = النظر للأمام، السالب = خفض الرأس
 window.QuranGlasses.pushPose({ pitch: -18.4 });</pre>
@@ -477,11 +481,34 @@ const VitureIMU = (() => {
     const r = [vx + w * tx + (y * tz - z * ty), vy + w * ty + (z * tx - x * tz), vz + w * tz + (x * ty - y * tx)];
     return Math.asin(Math.max(-1, Math.min(1, r[up]))) * DEG;
   }
-  // axis: "gaze" (default), "x", "y" or "z"; invert flips the sign.
-  function headPitch(sample, axis = "gaze", invert = false) {
+  const quatConj = q => [q[0], -q[1], -q[2], -q[3]];
+  const quatMul = (a, b) => [
+    a[0] * b[0] - a[1] * b[1] - a[2] * b[2] - a[3] * b[3],
+    a[0] * b[1] + a[1] * b[0] + a[2] * b[3] - a[3] * b[2],
+    a[0] * b[2] - a[1] * b[3] + a[2] * b[0] + a[3] * b[1],
+    a[0] * b[3] + a[1] * b[2] - a[2] * b[1] + a[3] * b[0]];
+  // Learn the nod axis from two poses: qA = looking ahead, qB = head down. Frame-agnostic: the
+  // axis is taken from the body-frame rotation between them, so no assumption about which device
+  // axis is up or forward. Returns { ref, n, angle } or null when the move was too small.
+  function learnNod(qA, qB) {
+    const d = quatMul(quatConj(qA), qB), s = d[0] < 0 ? -1 : 1;
+    const v = [d[1] * s, d[2] * s, d[3] * s], m = Math.hypot(v[0], v[1], v[2]);
+    const angle = 2 * Math.atan2(m, d[0] * s) * DEG;
+    if (m < 1e-6) return null;
+    return { ref: qA, n: v.map(x => x / m), angle };
+  }
+  // Twist of the body-frame rotation since `ref` about the learned nod axis: 0 at the reference,
+  // negative with the head down. Turning the head (about the body-up axis) barely changes it.
+  function nodPitch(q, nod) {
+    const d = quatMul(quatConj(nod.ref), q), s = d[0] < 0 ? -1 : 1;
+    const dot = (d[1] * nod.n[0] + d[2] * nod.n[1] + d[3] * nod.n[2]) * s;
+    return -2 * Math.atan2(dot, d[0] * s) * DEG;
+  }
+  // axis: "learned" (needs nod), "gaze", "x", "y" or "z"; invert flips the sign.
+  function headPitch(sample, axis = "gaze", invert = false, nod = null) {
     let p;
-    if (sample.q) p = axis === "gaze" ? gazePitch(sample.q) : euler(sample.q)[axis];
-    else p = axis === "gaze" ? sample.pitch : sample.euler[axis];
+    if (sample.q) p = axis === "learned" && nod ? nodPitch(sample.q, nod) : axis === "gaze" || axis === "learned" ? gazePitch(sample.q) : euler(sample.q)[axis];
+    else p = axis === "gaze" || axis === "learned" ? sample.pitch : sample.euler[axis];
     return invert ? -p : p;
   }
 
@@ -543,7 +570,7 @@ const VitureIMU = (() => {
     }
   }
 
-  return { VENDOR_ID, NAMES, supported, Session, euler, gazePitch, headPitch, gen2Frame, gen2ImuCommand, gen2Parse, gen1Command, gen1ImuCommand, gen1Parse, crc16 };
+  return { VENDOR_ID, NAMES, supported, Session, euler, gazePitch, headPitch, learnNod, nodPitch, quatMul, quatConj, gen2Frame, gen2ImuCommand, gen2Parse, gen1Command, gen1ImuCommand, gen1Parse, crc16 };
 })();
 
 
@@ -560,7 +587,8 @@ const store = {
   set(v) { try { localStorage.setItem("qg", JSON.stringify(v)); } catch {} }
 };
 const S = Object.assign({ s: 1, a: 1, per: 3, size: 34, offset: 8, glow: 100, color: "#f3f1e7", base: -15,
-  auto: true, advance: false, follow: true, axis: "gaze", inv: false }, store.get());
+  auto: true, advance: false, follow: true, axis: "gaze", inv: false, nod: null }, store.get());
+if (S.axis === "learned" && !S.nod) S.axis = "gaze";
 const save = () => store.set(S);
 
 let toastT;
@@ -787,10 +815,29 @@ imu.onPose = s => {
   const now = performance.now();
   if (now - imuAt < 50) return;                      // ~20 Hz is plenty for posture
   imuAt = now;
-  onPitch(VitureIMU.headPitch(s, S.axis, S.inv), "حساس النظارة");
+  onPitch(VitureIMU.headPitch(s, S.axis, S.inv, S.nod), "حساس النظارة");
   const e = s.q ? VitureIMU.euler(s.q) : s.euler;
   const g = s.q ? VitureIMU.gazePitch(s.q) : s.pitch;
-  $("angles").textContent = `X ${e.x.toFixed(0)}° · Y ${e.y.toFixed(0)}° · Z ${e.z.toFixed(0)}° · نظر ${g.toFixed(0)}°`;
+  const l = s.q && S.nod ? ` · متعلَّم ${VitureIMU.nodPitch(s.q, S.nod).toFixed(0)}°` : "";
+  $("angles").textContent = `X ${e.x.toFixed(0)}° · Y ${e.y.toFixed(0)}° · Z ${e.z.toFixed(0)}° · نظر ${g.toFixed(0)}°${l}`;
+};
+// Two-pose teach-in: capture the reference now, count down, capture the head-down pose.
+let learnT = null;
+$("learn").onclick = () => {
+  if (learnT) return;
+  const A = imu.last?.q;
+  if (!A) { toast("اربط النظارة أولًا، ثم اضغط وأنت تنظر للأمام"); return; }
+  let n = 4;
+  const tick = () => {
+    if (n > 0) { $("learn").textContent = `أنزل رأسك… ${AR(n--)}`; learnT = setTimeout(tick, 1000); return; }
+    learnT = null; $("learn").textContent = "تعليم حركة السجود";
+    const nod = imu.last?.q && VitureIMU.learnNod(A, imu.last.q);
+    if (!nod || nod.angle < 15) { toast("الحركة صغيرة. أعد المحاولة وأنزل رأسك أكثر"); return; }
+    S.nod = nod; S.axis = "learned"; S.inv = false; S.base = 0; save(); applyLook();
+    $("calib").textContent = "تمت المعايرة (٠°)";
+    toast(`تم التعلم: انحناءة ${AR(Math.round(nod.angle))}°. ارفع رأسك الآن`);
+  };
+  tick();
 };
 function hidStatus(st, msg) {
   const on = imu.connected;
@@ -832,7 +879,11 @@ $("auto").onchange = e => { S.auto = e.target.checked; save(); };
 $("advance").onchange = e => { S.advance = e.target.checked; save(); };
 $("follow").onchange = e => { S.follow = e.target.checked; save(); };
 $("sim").oninput = e => onPitch(+e.target.value, "محاكاة");
-$("calib").onclick = () => { S.base = Math.round(pitch); save(); onPitch(pitch); $("calib").textContent = `تمت المعايرة (${S.base}°)`; };
+$("calib").onclick = () => {
+  if (S.axis === "learned" && S.nod && imu.last?.q) { S.nod = { ...S.nod, ref: imu.last.q }; S.base = 0; }
+  else S.base = Math.round(pitch);
+  save(); onPitch(pitch); $("calib").textContent = `تمت المعايرة (${AR(S.base)}°)`;
+};
 $("prev").onclick = () => page(-1);
 $("next").onclick = () => page(1);
 $("mic").onclick = toggleMic;

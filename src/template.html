@@ -198,9 +198,11 @@ details.api pre {
   <div class="row sep">
     <button class="btn" id="hid" title="يطلب Chrome الإذن للوصول إلى النظارة عبر WebHID">ربط حساس النظارة</button>
     <span class="f" id="hidst">غير موصولة</span>
+    <button class="btn" id="learn" title="اضغط وأنت تنظر للأمام، ثم أنزل رأسك كأنك ساجد خلال ٤ ثوانٍ">تعليم حركة السجود</button>
     <label class="f">محور الميلان
       <select id="axis">
-        <option value="gaze">تلقائي: اتجاه النظر</option>
+        <option value="learned">متعلَّم من حركتك</option>
+        <option value="gaze">اتجاه النظر</option>
         <option value="x">زاوية X</option>
         <option value="y">زاوية Y</option>
         <option value="z">زاوية Z</option>
@@ -220,7 +222,9 @@ G                      وضع النظارة
 بالصوت: قل «سورة الكهف» لفتح أي سورة، أو ابدأ القراءة وتلقى الصفحة موضعك
 
 حساس النظارة: زر «ربط حساس النظارة» يطلب الإذن عبر WebHID (Chrome على الكمبيوتر، والصفحة على https).
-بعد الإذن الأول تتصل النظارة تلقائيًا عند فتح الصفحة. إن انعكست الإشارة (النص يختفي عند رفع الرأس) فعّل «عكس الإشارة».
+بعد الإذن الأول تتصل النظارة تلقائيًا عند فتح الصفحة.
+«تعليم حركة السجود»: اضغطه وأنت تنظر للأمام ثم أنزل رأسك خلال ٤ ثوانٍ؛ يتعلم التطبيق محور الإيماءة من حركتك فلا يتأثر بالالتفات يمينًا ويسارًا.
+«معايرة وضع القيام» بعد التعلم تعيد ضبط نقطة الصفر فقط.
 // واجهة برمجية بديلة لأي مصدر آخر للحساس:
 // pitch بالدرجات: 0 = النظر للأمام، السالب = خفض الرأس
 window.QuranGlasses.pushPose({ pitch: -18.4 });</pre>
@@ -258,7 +262,8 @@ const store = {
   set(v) { try { localStorage.setItem("qg", JSON.stringify(v)); } catch {} }
 };
 const S = Object.assign({ s: 1, a: 1, per: 3, size: 34, offset: 8, glow: 100, color: "#f3f1e7", base: -15,
-  auto: true, advance: false, follow: true, axis: "gaze", inv: false }, store.get());
+  auto: true, advance: false, follow: true, axis: "gaze", inv: false, nod: null }, store.get());
+if (S.axis === "learned" && !S.nod) S.axis = "gaze";
 const save = () => store.set(S);
 
 let toastT;
@@ -485,10 +490,29 @@ imu.onPose = s => {
   const now = performance.now();
   if (now - imuAt < 50) return;                      // ~20 Hz is plenty for posture
   imuAt = now;
-  onPitch(VitureIMU.headPitch(s, S.axis, S.inv), "حساس النظارة");
+  onPitch(VitureIMU.headPitch(s, S.axis, S.inv, S.nod), "حساس النظارة");
   const e = s.q ? VitureIMU.euler(s.q) : s.euler;
   const g = s.q ? VitureIMU.gazePitch(s.q) : s.pitch;
-  $("angles").textContent = `X ${e.x.toFixed(0)}° · Y ${e.y.toFixed(0)}° · Z ${e.z.toFixed(0)}° · نظر ${g.toFixed(0)}°`;
+  const l = s.q && S.nod ? ` · متعلَّم ${VitureIMU.nodPitch(s.q, S.nod).toFixed(0)}°` : "";
+  $("angles").textContent = `X ${e.x.toFixed(0)}° · Y ${e.y.toFixed(0)}° · Z ${e.z.toFixed(0)}° · نظر ${g.toFixed(0)}°${l}`;
+};
+// Two-pose teach-in: capture the reference now, count down, capture the head-down pose.
+let learnT = null;
+$("learn").onclick = () => {
+  if (learnT) return;
+  const A = imu.last?.q;
+  if (!A) { toast("اربط النظارة أولًا، ثم اضغط وأنت تنظر للأمام"); return; }
+  let n = 4;
+  const tick = () => {
+    if (n > 0) { $("learn").textContent = `أنزل رأسك… ${AR(n--)}`; learnT = setTimeout(tick, 1000); return; }
+    learnT = null; $("learn").textContent = "تعليم حركة السجود";
+    const nod = imu.last?.q && VitureIMU.learnNod(A, imu.last.q);
+    if (!nod || nod.angle < 15) { toast("الحركة صغيرة. أعد المحاولة وأنزل رأسك أكثر"); return; }
+    S.nod = nod; S.axis = "learned"; S.inv = false; S.base = 0; save(); applyLook();
+    $("calib").textContent = "تمت المعايرة (٠°)";
+    toast(`تم التعلم: انحناءة ${AR(Math.round(nod.angle))}°. ارفع رأسك الآن`);
+  };
+  tick();
 };
 function hidStatus(st, msg) {
   const on = imu.connected;
@@ -530,7 +554,11 @@ $("auto").onchange = e => { S.auto = e.target.checked; save(); };
 $("advance").onchange = e => { S.advance = e.target.checked; save(); };
 $("follow").onchange = e => { S.follow = e.target.checked; save(); };
 $("sim").oninput = e => onPitch(+e.target.value, "محاكاة");
-$("calib").onclick = () => { S.base = Math.round(pitch); save(); onPitch(pitch); $("calib").textContent = `تمت المعايرة (${S.base}°)`; };
+$("calib").onclick = () => {
+  if (S.axis === "learned" && S.nod && imu.last?.q) { S.nod = { ...S.nod, ref: imu.last.q }; S.base = 0; }
+  else S.base = Math.round(pitch);
+  save(); onPitch(pitch); $("calib").textContent = `تمت المعايرة (${AR(S.base)}°)`;
+};
 $("prev").onclick = () => page(-1);
 $("next").onclick = () => page(1);
 $("mic").onclick = toggleMic;

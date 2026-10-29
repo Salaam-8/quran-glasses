@@ -80,11 +80,34 @@ const VitureIMU = (() => {
     const r = [vx + w * tx + (y * tz - z * ty), vy + w * ty + (z * tx - x * tz), vz + w * tz + (x * ty - y * tx)];
     return Math.asin(Math.max(-1, Math.min(1, r[up]))) * DEG;
   }
-  // axis: "gaze" (default), "x", "y" or "z"; invert flips the sign.
-  function headPitch(sample, axis = "gaze", invert = false) {
+  const quatConj = q => [q[0], -q[1], -q[2], -q[3]];
+  const quatMul = (a, b) => [
+    a[0] * b[0] - a[1] * b[1] - a[2] * b[2] - a[3] * b[3],
+    a[0] * b[1] + a[1] * b[0] + a[2] * b[3] - a[3] * b[2],
+    a[0] * b[2] - a[1] * b[3] + a[2] * b[0] + a[3] * b[1],
+    a[0] * b[3] + a[1] * b[2] - a[2] * b[1] + a[3] * b[0]];
+  // Learn the nod axis from two poses: qA = looking ahead, qB = head down. Frame-agnostic: the
+  // axis is taken from the body-frame rotation between them, so no assumption about which device
+  // axis is up or forward. Returns { ref, n, angle } or null when the move was too small.
+  function learnNod(qA, qB) {
+    const d = quatMul(quatConj(qA), qB), s = d[0] < 0 ? -1 : 1;
+    const v = [d[1] * s, d[2] * s, d[3] * s], m = Math.hypot(v[0], v[1], v[2]);
+    const angle = 2 * Math.atan2(m, d[0] * s) * DEG;
+    if (m < 1e-6) return null;
+    return { ref: qA, n: v.map(x => x / m), angle };
+  }
+  // Twist of the body-frame rotation since `ref` about the learned nod axis: 0 at the reference,
+  // negative with the head down. Turning the head (about the body-up axis) barely changes it.
+  function nodPitch(q, nod) {
+    const d = quatMul(quatConj(nod.ref), q), s = d[0] < 0 ? -1 : 1;
+    const dot = (d[1] * nod.n[0] + d[2] * nod.n[1] + d[3] * nod.n[2]) * s;
+    return -2 * Math.atan2(dot, d[0] * s) * DEG;
+  }
+  // axis: "learned" (needs nod), "gaze", "x", "y" or "z"; invert flips the sign.
+  function headPitch(sample, axis = "gaze", invert = false, nod = null) {
     let p;
-    if (sample.q) p = axis === "gaze" ? gazePitch(sample.q) : euler(sample.q)[axis];
-    else p = axis === "gaze" ? sample.pitch : sample.euler[axis];
+    if (sample.q) p = axis === "learned" && nod ? nodPitch(sample.q, nod) : axis === "gaze" || axis === "learned" ? gazePitch(sample.q) : euler(sample.q)[axis];
+    else p = axis === "gaze" || axis === "learned" ? sample.pitch : sample.euler[axis];
     return invert ? -p : p;
   }
 
@@ -146,6 +169,6 @@ const VitureIMU = (() => {
     }
   }
 
-  return { VENDOR_ID, NAMES, supported, Session, euler, gazePitch, headPitch, gen2Frame, gen2ImuCommand, gen2Parse, gen1Command, gen1ImuCommand, gen1Parse, crc16 };
+  return { VENDOR_ID, NAMES, supported, Session, euler, gazePitch, headPitch, learnNod, nodPitch, quatMul, quatConj, gen2Frame, gen2ImuCommand, gen2Parse, gen1Command, gen1ImuCommand, gen1Parse, crc16 };
 })();
 if (typeof module !== "undefined") module.exports = VitureIMU;

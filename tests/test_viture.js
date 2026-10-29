@@ -46,6 +46,22 @@ near("headPitch default axis", V.headPitch({ q: headYawPitch }), 20);
 near("headPitch axis y", V.headPitch({ q: headYawPitch }, "y"), 30);
 near("headPitch inverted", V.headPitch({ q: headYawPitch }, "gaze", true), -20);
 
+// ---- learned nod axis: frame-agnostic ----
+// Pretend the device frame is permuted: body forward = X, world up = Z, the nod is about body Y.
+{
+  const A = qAxis(20, 2);                               // looking ahead, some heading
+  const B = qMul(A, qAxis(40, 1));                      // head down 40° (body-frame nod)
+  const nod = V.learnNod(A, B);
+  near("learned nod angle", nod.angle, 40);
+  near("learned axis is body Y", Math.abs(nod.n[1]), 1, 1e-6);
+  near("nod pitch at reference", V.nodPitch(A, nod), 0, 1e-6);
+  near("nod pitch head down", V.nodPitch(B, nod), -40);
+  near("nod pitch after turning 50°", V.nodPitch(qMul(A, qAxis(50, 2)), nod), 0, 1e-3);
+  near("nod pitch turned 80° then down 25°", V.nodPitch(qMul(qMul(A, qAxis(80, 2)), qAxis(25, 1)), nod), -25);
+  near("headPitch learned", V.headPitch({ q: B }, "learned", false, nod), -40);
+  t("learnNod rejects no motion", V.learnNod(A, A), null);
+}
+
 // ---- Gen1 frames ----
 const c1 = V.gen1ImuCommand(true);
 t("gen1 cmd length", c1.length, 20);
