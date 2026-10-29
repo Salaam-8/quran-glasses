@@ -17,7 +17,7 @@ const server = http.createServer((req, res) => {
 
 let pass = 0, fail = 0;
 const t = (name, got, want) => {
-  const ok = got === want; ok ? pass++ : fail++;
+  const ok = JSON.stringify(got) === JSON.stringify(want); ok ? pass++ : fail++;
   console.log(`${ok ? "PASS" : "FAIL"} ${name} → ${got}${ok ? "" : ` (want ${want})`}`);
 };
 
@@ -58,6 +58,13 @@ const t = (name, got, want) => {
       return document.getElementById("pitchv").textContent + " " + document.getElementById("src").textContent;
     });
     t("IMU frame drives posture", imuPitch, "-40° المصدر: حساس النظارة");
+    // posture: outside glasses mode the sensor must not hide the page (you are configuring, looking down)
+    for (let k = 0; k < 6; k++) { await p.evaluate(() => QuranGlasses.pushPose({ pitch: -80 })); await p.waitForTimeout(100); }
+    t("sensor head-down keeps text while configuring", await p.evaluate(() => [document.getElementById("text").classList.contains("off"), document.getElementById("state").textContent]),
+      [false, "ركوع/سجود · يُخفى في وضع النظارة فقط"]);
+    t("sensor head-down hides text in glasses mode", await p.evaluate(() => { document.body.classList.add("focus-mode"); applyHide(); const r = document.getElementById("text").classList.contains("off"); document.body.classList.remove("focus-mode"); applyHide(); return r; }), true);
+    for (let k = 0; k < 6; k++) { await p.evaluate(() => QuranGlasses.pushPose({ pitch: 0 })); await p.waitForTimeout(100); }
+    t("sensor head-up shows text again", await p.textContent("#state"), "قيام · النص ظاهر");
     t("no page errors", errs.length, 0);
     await p.close();
   }

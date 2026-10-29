@@ -18,7 +18,7 @@ assets/               Amiri Quran woff2 (SIL OFL), app icons
 build.py              builds dist/ (standard library only)
 tests/test_engine.js  26 matcher tests against the real text (node, no deps)
 tests/test_viture.js  38 IMU driver tests: byte-exact frames, quaternion → head angle (node, no deps)
-tests/test_browser.js 18 end-to-end tests, desktop + emulated phone (needs playwright)
+tests/test_browser.js 21 end-to-end tests, desktop + emulated phone (needs playwright)
 dist/                 build output (committed so GitHub Pages can serve dist/app)
 ```
 
@@ -46,7 +46,7 @@ Outputs:
 | Surah picker in glasses | `S` / `.` / `B` opens it; arrows / PageUp / PageDown move; digits jump; Enter opens | browser test |
 | Manual paging any time | ← / Space / PageDown = next, → / PageUp = prev; voice resumes from the new page | browser test |
 | Phone touch | tap left 30% = next, right 30% = prev, swipe right = next, swipe left = prev, long-press = surah list, center tap = on-screen buttons (exit / surahs / mic) | emulated Pixel 7 |
-| Posture auto-hide | text hides when the head drops (ruku/sujood) and returns at qiyam; calibration button | simulation slider + synthetic IMU frame in browser test |
+| Posture auto-hide | text hides when the head drops (ruku/sujood) and returns at qiyam; calibration button. The sensor only hides the page in glasses mode (G): with the bar visible you are configuring on the laptop and looking down, so the page stays readable and the chip says «يُخفى في وضع النظارة فقط». The simulation slider hides in any mode | simulation slider + synthetic IMU frame in browser test |
 | Glasses IMU | «ربط حساس النظارة» button → WebHID chooser → pose stream 120 Hz → head angle → posture engine. Auto-reconnects on reload. | real Pro 2: connect + stream verified; posture via teach-in |
 
 ### Matcher design (src/engine.js)
@@ -62,7 +62,7 @@ Outputs:
 
 ## Not done / open items (priority order)
 
-1. ~~Host the PWA on GitHub Pages.~~ **Done (2026-10-29).** Private repo `Salaam-8/quran-glasses`, published by `.github/workflows/pages.yml` (Pages source = GitHub Actions) on every push to `main`. Live: https://salaam-8.github.io/quran-glasses/ ; manifest and sw.js verified 200 in Chrome. Bump `CACHE` in `build.py` on every deploy (now v10).
+1. ~~Host the PWA on GitHub Pages.~~ **Done (2026-10-29).** Private repo `Salaam-8/quran-glasses`, published by `.github/workflows/pages.yml` (Pages source = GitHub Actions) on every push to `main`. Live: https://salaam-8.github.io/quran-glasses/ ; manifest and sw.js verified 200 in Chrome. Bump `CACHE` in `build.py` on every deploy (now v11).
 2. **Glasses IMU: implemented, needs a real-device check.** `src/viture.js` talks to the glasses over WebHID
    without the vendor SDK (its browser build has no public download). Protocol sources:
    - Gen2 / Pro 2 (`35CA:1301`): https://github.com/elasticjava/viture-v2/blob/main/PROTOCOL.md — one HID interface,

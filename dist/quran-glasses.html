@@ -782,7 +782,7 @@ function drawPicker() {
 function openPicker() { pick = S.s; typed = ""; drawPicker(); $("picker").hidden = false; $("text").classList.add("off"); }
 function closePicker(ok) {
   if (ok && pick) gotoSurah(pick);
-  pick = null; $("picker").hidden = true; $("text").classList.toggle("off", !visible);
+  pick = null; $("picker").hidden = true; applyHide();
 }
 function movePick(d) { pick = Math.min(114, Math.max(1, pick + d)); drawPicker(); }
 $("picker").addEventListener("click", e => { const b = e.target.closest("button[data-n]"); if (b) { pick = +b.dataset.n; closePicker(true); } });
@@ -807,11 +807,22 @@ const LOOK_DEFAULTS = { per: 3, size: 34, offset: 8, glow: 100, color: "#f3f1e7"
    Show text while the head is near the calibrated qiyam angle; hide when it drops well below it.
    Hysteresis + debounce avoid flicker. */
 const SHOW_BAND = 20, HIDE_BAND = 35, DEBOUNCE = 350, SUJOOD_MS = 2500;
-let pitch = S.base, visible = true, pending = null, pendingSince = 0, hiddenAt = 0;
+let pitch = S.base, visible = true, pending = null, pendingSince = 0, hiddenAt = 0, pitchSource = "محاكاة";
+
+/* The sensor only hides the text in glasses mode (or when driven by the simulation slider):
+   while the bar is visible you are configuring on the laptop, usually looking down, and the
+   page must stay readable. The state chip always reflects the posture. */
+function applyHide() {
+  const armed = document.body.classList.contains("focus-mode") || pitchSource === "محاكاة";
+  if (pick === null) $("text").classList.toggle("off", !visible && armed);
+  const st = $("state");
+  st.className = "chip " + (visible ? "show" : "hide");
+  st.textContent = visible ? "قيام · النص ظاهر" : armed ? "ركوع/سجود · النص مخفي" : "ركوع/سجود · يُخفى في وضع النظارة فقط";
+}
 
 function onPitch(p, source) {
   pitch = p;
-  if (source) $("src").textContent = "المصدر: " + source;
+  if (source) { pitchSource = source; $("src").textContent = "المصدر: " + source; }
   $("pitchv").textContent = p.toFixed(0) + "°";
   const pos = v => `${((Math.max(-100, Math.min(20, v)) + 100) / 120) * 100}%`;
   $("gNow").style.left = pos(p); $("gShow").style.left = pos(S.base - SHOW_BAND); $("gHide").style.left = pos(S.base - HIDE_BAND);
@@ -829,10 +840,7 @@ function onPitch(p, source) {
   visible = want; pending = null;
   if (!visible) hiddenAt = now;
   else if (S.advance && !listening && now - hiddenAt >= SUJOOD_MS) page(1);
-  if (pick === null) $("text").classList.toggle("off", !visible);
-  const st = $("state");
-  st.className = "chip " + (visible ? "show" : "hide");
-  st.textContent = visible ? "قيام · النص ظاهر" : "ركوع/سجود · النص مخفي";
+  applyHide();
 }
 setInterval(() => onPitch(pitch), 100);
 
@@ -928,6 +936,7 @@ document.addEventListener("visibilitychange", () => {
 });
 function toggleFocus() {
   const on = document.body.classList.toggle("focus-mode");
+  applyHide();
   try {
     if (on && !document.fullscreenElement) {
       const p = document.documentElement.requestFullscreen?.();
