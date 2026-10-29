@@ -1,6 +1,7 @@
 // End-to-end checks in headless Chromium (needs: npm i -D playwright && npx playwright install chromium)
 // Run after `py build.py`:  node tests/test_browser.js
 const { chromium, devices } = require("playwright");
+const { WebSocketServer } = require("ws");
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
@@ -24,7 +25,7 @@ const t = (name, got, want) => {
 (async () => {
   await new Promise(r => server.listen(0, r));
   const url = `http://localhost:${server.address().port}/`;
-  const b = await chromium.launch();
+  const b = await chromium.launch({ args: ["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream"] });
 
   // ---- desktop: voice tracking (simulated text), commands, picker, keys ----
   {
@@ -97,6 +98,26 @@ const t = (name, got, want) => {
       return { region: r.c.r, lang: r.c.speechRecognitionLanguage, started: calls.started, phrases: calls.phrases > 10, partial, final, state };
     });
     t("azure engine wiring", azr, { region: "uaenorth", lang: "ar-SA", started: true, phrases: true, partial: "2", final: "4", state: "يستمع… (Azure)" });
+    // self-hosted engine: real mic capture (fake device) streamed to a fake ASR WebSocket server
+    const wss = new WebSocketServer({ port: 0 }); const wsPort = wss.address().port;
+    const seen = { ctx: null, audio: 0, stop: false, sent: false, url: "" };
+    wss.on("connection", (sock, req) => {
+      seen.url = req.url; sock.send(JSON.stringify({ type: "ready", model: "fake" }));
+      sock.on("message", (data, isBinary) => {
+        if (isBinary) { seen.audio += data.length; if (seen.audio > 3200 && !seen.sent) { seen.sent = true; sock.send(JSON.stringify({ type: "partial", text: "الحمد لله" })); sock.send(JSON.stringify({ type: "final", text: "الحمد لله رب العالمين" })); } }
+        else { const m = JSON.parse(data.toString()); if (m.type === "ctx") seen.ctx = m; if (m.type === "stop") seen.stop = true; }
+      });
+    });
+    await p.evaluate(port => { S.engine = "server"; S.srvUrl = "http://localhost:" + port; S.srvToken = "tok"; applyLook(); QuranGlasses.goto(1, 1); startMic(); }, wsPort);
+    await p.waitForTimeout(1500);
+    const srvState = await p.evaluate(() => [document.getElementById("micState").textContent, document.querySelector(".ay.cur")?.dataset.a]);
+    t("server engine streams 16 kHz audio", seen.audio > 3200, true);
+    t("server engine sends ayah context", !!seen.ctx && seen.ctx.hot.includes("الحمد"), true);
+    t("server engine url carries token", seen.url, "/ws?token=tok");
+    t("server engine results drive highlight", srvState, ["يستمع… (السيرفر)", "2"]);
+    await p.evaluate(() => { stopMic(); S.engine = "browser"; applyLook(); }); await p.waitForTimeout(500);
+    t("server engine sends stop", seen.stop, true);
+    wss.close();
     t("no page errors", errs.length, 0);
     await p.close();
   }

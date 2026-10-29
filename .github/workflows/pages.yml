@@ -28,8 +28,10 @@ jobs:
           node-version: "22"
       - name: Build
         run: python3 build.py
-      - name: Engine and IMU tests
-        run: node tests/test_engine.js && node tests/test_viture.js
+      - name: Engine, IMU and ASR server tests
+        run: |
+          node tests/test_engine.js && node tests/test_viture.js
+          pip install -q numpy websockets && python3 tests/test_server.py
       - name: Configure Pages (enables Pages on first run)
         uses: actions/configure-pages@v5
         with:

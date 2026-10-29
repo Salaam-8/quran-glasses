@@ -184,8 +184,13 @@ details.api pre {
       <select id="engine">
         <option value="browser">المتصفح (Google عبر Chrome)</option>
         <option value="azure">Azure سحابي (بلا طنين، أسرع)</option>
+        <option value="server">سيرفر قرآني (مجاني، نموذج تلاوة)</option>
       </select>
     </label>
+    <span id="serverBox" hidden>
+      <label class="f">رابط السيرفر <input id="srvUrl" type="url" autocomplete="off" placeholder="https://xxxx.duckdns.org" style="width:190px"></label>
+      <label class="f">الرمز السري <input id="srvToken" type="password" autocomplete="off" placeholder="ASR_TOKEN" style="width:120px"></label>
+    </span>
     <span id="azureBox" hidden>
       <label class="f">مفتاح Azure <input id="azKey" type="password" autocomplete="off" placeholder="Key 1" style="width:150px"></label>
       <label class="f">المنطقة <input id="azRegion" type="text" autocomplete="off" placeholder="uaenorth" style="width:100px"></label>
@@ -243,6 +248,8 @@ V                      تشغيل وإيقاف تتبّع الصوت
 G                      وضع النظارة
 بالصوت: قل «سورة الكهف» لفتح أي سورة، أو ابدأ القراءة وتلقى الصفحة موضعك
 الصوت على الجوال: Chrome على أندرويد يعمل (يحتاج إنترنت). على الآيفون افتح الرابط في Safari مباشرة، لا من أيقونة الشاشة الرئيسية.
+السيرفر القرآني: سيرفرك الخاص بنموذج تعرّف مدرّب على التلاوة (مجاني، بلا طنين، بلا حدود ساعات). خطوات تشغيله على Oracle Cloud المجاني في ملف server/README.md في المشروع.
+  ثم اختر «سيرفر قرآني» وضع رابطه (https://اسمك.duckdns.org) والرمز السري الذي اخترته في ملف .env على السيرفر.
 محرك Azure السحابي: جلسة استماع واحدة متصلة بلا طنين ولا إعادة تشغيل، ونتائج جزئية أسرع، ويعمل في أي متصفح حتى Samsung Internet.
   الإعداد مرة واحدة (مجاني حتى ٥ ساعات شهريًا): portal.azure.com ← Create a resource ← Speech ← المنطقة UAE North ← Pricing tier Free F0
   ← بعد الإنشاء: Keys and Endpoint ← انسخ KEY 1 والصقه في «مفتاح Azure»، والمنطقة uaenorth. المفتاح يُحفظ في هذا المتصفح فقط.
@@ -644,7 +651,7 @@ const store = {
 };
 const S = Object.assign({ s: 1, a: 1, per: 3, size: 34, offset: 8, glow: 100, color: "#f3f1e7", base: -15,
   auto: true, advance: false, follow: true, axis: "gaze", inv: false, nod: null, lead: 80,
-  engine: "browser", azKey: "", azRegion: "uaenorth" }, store.get());
+  engine: "browser", azKey: "", azRegion: "uaenorth", srvUrl: "", srvToken: "" }, store.get());
 if (S.axis === "learned" && !S.nod) S.axis = "gaze";
 const save = () => store.set(S);
 
@@ -736,6 +743,7 @@ function setPos(i) {
   notePace(i);
   curIdx = i; cursor = i + 1; miss = 0;
   if (az) azureBias();
+  if (srv) serverCtx();
   const p = Engine.pos(i);
   if (p.s !== S.s) {
     S.s = p.s; S.a = p.a; render();
@@ -790,6 +798,7 @@ function noSpeechHint() {
 }
 function startMic() {
   if (S.engine === "azure") return startAzure();
+  if (S.engine === "server") return startServer();
   if (!SR) { micStatus(noSpeechHint(), "hide"); return; }
   rec = new SR();
   rec.lang = "ar-SA"; rec.continuous = true; rec.interimResults = true; rec.maxAlternatives = 3;
@@ -833,8 +842,85 @@ function startMic() {
 }
 function stopMic() {
   listening = false; try { rec && rec.stop(); } catch {}
-  stopAzure();
+  stopAzure(); stopServer();
   curIdx = -1; highlight(); micStatus("الصوت متوقف");
+}
+
+/* ---------- self-hosted engine: server/asr_server.py (Quran-tuned Whisper) ----------
+   The mic is captured with an AudioWorklet, resampled to 16 kHz int16 and streamed over a
+   WebSocket; the server answers with partial / final text. The expected text around the cursor
+   is sent as context so the model is biased toward the right ayah. */
+const PCM_WORKLET = URL.createObjectURL(new Blob([`
+class Pcm16 extends AudioWorkletProcessor {
+  constructor() { super(); this.acc = []; this.n = 0; this.ratio = sampleRate / 16000; this.carry = 0; }
+  process(inputs) {
+    const ch = inputs[0] && inputs[0][0]; if (!ch) return true;
+    // linear resample to 16 kHz when the context could not be opened at 16 kHz
+    const out = [];
+    if (this.ratio === 1) { for (let i = 0; i < ch.length; i++) out.push(ch[i]); }
+    else { for (let pos = this.carry; pos < ch.length; pos += this.ratio) { const i = Math.floor(pos), f = pos - i; out.push(ch[i] * (1 - f) + (ch[Math.min(i + 1, ch.length - 1)] || ch[i]) * f); this.carry = pos + this.ratio - ch.length; } if (this.carry < 0) this.carry = 0; }
+    this.acc.push(out); this.n += out.length;
+    if (this.n >= 1600) {                                   // 100 ms per message
+      const buf = new Int16Array(this.n); let k = 0;
+      for (const a of this.acc) for (const v of a) buf[k++] = Math.max(-32768, Math.min(32767, Math.round(v * 32767)));
+      this.port.postMessage(buf.buffer, [buf.buffer]); this.acc = []; this.n = 0;
+    }
+    return true;
+  }
+}
+registerProcessor("pcm16", Pcm16);`], { type: "application/javascript" }));
+let srv = null, srvCtxKey = "";
+function serverCtx(force) {
+  if (!srv || srv.ws.readyState !== 1) return;
+  const k = `${S.s}:${S.a}`; if (!force && k === srvCtxKey) return; srvCtxKey = k;
+  const vs = Q[S.s - 1][1];
+  const prev = S.a > 1 ? Engine.norm(vs[S.a - 2]) : (S.s > 1 ? Engine.norm(Q[0][1][0]) : "");
+  const hot = []; for (let a = S.a; a <= Math.min(vs.length, S.a + 2); a++) hot.push(Engine.norm(vs[a - 1]));
+  try { srv.ws.send(JSON.stringify({ type: "ctx", prompt: prev.slice(-300), hot: hot.join(" ").slice(0, 600) })); } catch {}
+}
+async function startServer() {
+  if (!S.srvUrl) { micStatus("أدخل رابط السيرفر أولًا (الإعداد في server/README.md)", "hide"); return; }
+  listening = true; resync(); micStatus("جاري الاتصال بالسيرفر…");
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+    let ctx; try { ctx = new AudioContext({ sampleRate: 16000 }); } catch { ctx = new AudioContext(); }
+    await ctx.audioWorklet.addModule(PCM_WORKLET);
+    const src = ctx.createMediaStreamSource(stream);
+    const node = new AudioWorkletNode(ctx, "pcm16", { numberOfInputs: 1, numberOfOutputs: 0 });
+    const base = S.srvUrl.replace(/^http/i, "ws").replace(/\/+$/, "").replace(/\/ws$/, "");
+    const ws = new WebSocket(base + "/ws" + (S.srvToken ? "?token=" + encodeURIComponent(S.srvToken) : ""));
+    ws.binaryType = "arraybuffer";
+    srv = { ws, ctx, node, stream };
+    node.port.onmessage = e => { if (ws.readyState === 1) ws.send(e.data); };
+    ws.onopen = () => { srvCtxKey = ""; serverCtx(true); src.connect(node); if (ctx.state !== "running") ctx.resume(); };
+    ws.onmessage = e => {
+      let m; try { m = JSON.parse(e.data); } catch { return; }
+      if (!listening) return;
+      if (m.type === "ready") micStatus("يستمع… (السيرفر)", "show");
+      else if (m.type === "partial") onHeard(finalBuf + " " + m.text, false, m.text);
+      else if (m.type === "final") { finalBuf = (finalBuf + " " + m.text).trim().split(/\s+/).slice(-16).join(" "); onHeard(finalBuf, true, m.text); serverCtx(); }
+      else if (m.type === "error") micStatus("السيرفر: " + m.message, "hide");
+    };
+    ws.onclose = e => {
+      if (!listening) return;
+      listening = false;
+      micStatus(e.code === 4401 ? "السيرفر رفض الرمز السري" : e.code === 1006 ? "تعذّر الوصول للسيرفر. تحقق من الرابط وأنه يعمل (https)" : "انقطع الاتصال بالسيرفر. اضغط التشغيل مرة ثانية", "hide");
+      stopServer();
+    };
+  } catch (e) {
+    listening = false;
+    micStatus(/NotAllowed|Permission|denied/i.test(e.name + " " + e.message) ? "المايك مرفوض. اسمح للميكروفون ثم أعد المحاولة" : "تعذّر تشغيل المايك: " + e.message, "hide");
+    stopServer();
+  }
+}
+function stopServer() {
+  const r = srv; srv = null; srvCtxKey = "";
+  if (!r) return;
+  try { if (r.ws.readyState === 1) r.ws.send(JSON.stringify({ type: "stop" })); } catch {}
+  try { r.node.disconnect(); } catch {}
+  try { r.stream.getTracks().forEach(tr => tr.stop()); } catch {}
+  try { r.ctx.close(); } catch {}
+  setTimeout(() => { try { r.ws.close(); } catch {} }, 300);
 }
 
 /* ---------- cloud engine: Azure Speech, streaming from the browser ----------
@@ -988,6 +1074,7 @@ function applyLook() {
   $("axis").value = S.axis; $("inv").checked = S.inv;
   $("lead").value = S.lead; $("leadv").textContent = AR(S.lead) + "٪";
   $("engine").value = S.engine; $("azKey").value = S.azKey; $("azRegion").value = S.azRegion; $("azureBox").hidden = S.engine !== "azure";
+  $("srvUrl").value = S.srvUrl; $("srvToken").value = S.srvToken; $("serverBox").hidden = S.engine !== "server";
   save(); fitText();
 }
 const LOOK_DEFAULTS = { per: 3, size: 34, offset: 8, glow: 100, color: "#f3f1e7" };
@@ -1104,6 +1191,8 @@ $("lead").oninput = e => { S.lead = +e.target.value; applyLook(); };
 $("engine").onchange = e => { const was = listening; if (was) stopMic(); S.engine = e.target.value; applyLook(); if (was) startMic(); };
 $("azKey").onchange = e => { S.azKey = e.target.value.trim(); save(); };
 $("azRegion").onchange = e => { S.azRegion = e.target.value.trim().toLowerCase() || "uaenorth"; applyLook(); };
+$("srvUrl").onchange = e => { S.srvUrl = e.target.value.trim(); save(); };
+$("srvToken").onchange = e => { S.srvToken = e.target.value.trim(); save(); };
 $("resetLook").onclick = () => { Object.assign(S, LOOK_DEFAULTS); applyLook(); render(); toast("رجعت إعدادات العرض إلى الافتراضي"); };
 document.querySelectorAll(".sw").forEach(b => b.onclick = () => { S.color = b.dataset.c; applyLook(); });
 $("auto").onchange = e => { S.auto = e.target.checked; save(); };

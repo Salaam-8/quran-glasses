@@ -1,0 +1,4 @@
+# Caddy gets a free Let's Encrypt certificate for DOMAIN automatically and proxies WebSockets.
+{$DOMAIN} {
+	reverse_proxy asr:8765
+}

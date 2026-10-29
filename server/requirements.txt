@@ -1,0 +1,6 @@
+faster-whisper==1.2.1
+websockets>=13
+numpy>=1.26
+# needed only for the one-time model conversion (see entrypoint.sh)
+transformers>=4.40,<5
+torch>=2.2
