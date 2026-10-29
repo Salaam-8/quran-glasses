@@ -237,6 +237,8 @@ S  .  B                فتح قائمة السور (داخل القائمة: ا
 V                      تشغيل وإيقاف تتبّع الصوت
 G                      وضع النظارة
 بالصوت: قل «سورة الكهف» لفتح أي سورة، أو ابدأ القراءة وتلقى الصفحة موضعك
+الصوت على الجوال: Chrome على أندرويد يعمل (يحتاج إنترنت). على الآيفون افتح الرابط في Safari مباشرة، لا من أيقونة الشاشة الرئيسية.
+الإعدادات محفوظة في كل متصفح على حدة، فكل جهاز له خطه وارتفاعه ومعايرته.
 
 حساس النظارة: زر «ربط حساس النظارة» يطلب الإذن عبر WebHID (Chrome على الكمبيوتر، والصفحة على https).
 بعد الإذن الأول تتصل النظارة تلقائيًا عند فتح الصفحة.
@@ -244,7 +246,8 @@ G                      وضع النظارة
 «معايرة وضع القيام» بعد التعلم تعيد ضبط نقطة الصفر فقط.
 // واجهة برمجية بديلة لأي مصدر آخر للحساس:
 // pitch بالدرجات: 0 = النظر للأمام، السالب = خفض الرأس
-window.QuranGlasses.pushPose({ pitch: -18.4 });</pre>
+window.QuranGlasses.pushPose({ pitch: -18.4 });
+<span id="diag"></span></pre>
   </details>
 </header>
 
@@ -715,8 +718,16 @@ function micStatus(text, kind) {
   $("micdot").hidden = !listening;
 }
 
+const UA = navigator.userAgent, IOS = /iPhone|iPad|iPod/.test(UA) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+const STANDALONE = matchMedia("(display-mode: standalone), (display-mode: fullscreen)").matches || navigator.standalone === true;
+function noSpeechHint() {
+  if (IOS && STANDALONE) return "على الآيفون لا يعمل التعرف على الصوت من أيقونة الشاشة الرئيسية. افتح الرابط في Safari نفسه";
+  if (IOS) return "على الآيفون استخدم Safari، فمتصفحات iOS الأخرى لا تدعم التعرف على الصوت";
+  if (/SamsungBrowser|FxiOS|Firefox|OPR\//.test(UA)) return "هذا المتصفح لا يدعم التعرف على الصوت. افتح الرابط في Chrome";
+  return "المتصفح ما يدعم التعرف على الصوت. استخدم Chrome";
+}
 function startMic() {
-  if (!SR) { micStatus("المتصفح ما يدعم التعرف على الصوت. استخدم Chrome", "hide"); return; }
+  if (!SR) { micStatus(noSpeechHint(), "hide"); return; }
   rec = new SR();
   rec.lang = "ar-SA"; rec.continuous = true; rec.interimResults = true; rec.maxAlternatives = 1;
   rec.onresult = e => {
@@ -736,6 +747,8 @@ function startMic() {
       micStatus("المايك مرفوض. افتح الصفحة من رابطها (https) واسمح للمايك", "hide");
     } else if (e.error === "network") micStatus("التعرف على الصوت يحتاج إنترنت", "hide");
     else if (e.error === "audio-capture") { listening = false; micStatus("ما فيه مايك متصل", "hide"); }
+    else if (e.error === "language-not-supported") { listening = false; micStatus("هذا المتصفح لا يدعم العربية في التعرف على الصوت", "hide"); }
+    else if (e.error !== "no-speech" && e.error !== "aborted") micStatus(`خطأ في التعرف: ${e.error}`, "hide");
   };
   rec.onstart = () => micStatus("يستمع…", "show");
   rec.onend = () => {
@@ -1021,6 +1034,7 @@ document.addEventListener("keydown", e => {
 
 $("sim").value = S.base;
 applyLook(); resync(); render(); onPitch(S.base, "محاكاة"); micStatus("الصوت متوقف");
+$("diag").textContent = `تشخيص: ${IOS ? "iOS" : /Android/.test(UA) ? "Android" : "كمبيوتر"} · ${STANDALONE ? "تطبيق مثبّت" : "متصفح"} · التعرف على الصوت: ${SR ? "متاح" : "غير متاح"} · WebHID: ${VitureIMU.supported() ? "متاح" : "غير متاح"} · ${location.protocol}`;
 </script>
 
 </body>
