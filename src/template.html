@@ -179,6 +179,7 @@ details.api pre {
     <button class="btn" id="mic" title="تشغيل وإيقاف تتبع الصوت (V)">تشغيل تتبّع الصوت</button>
     <span class="chip" id="micState">الصوت متوقف</span>
     <label class="f"><input id="follow" type="checkbox" checked> قلب الصفحة مع القراءة</label>
+    <label class="f" title="يحرّك التحديد للأمام بين نتائج التعرف بنسبة من سرعة تلاوتك. صفر = بلا استباق، ١٠٠٪ = بسرعة تلاوتك نفسها">استباق التحديد <input id="lead" type="range" min="0" max="150" step="10" value="80"> <span class="num" id="leadv">٨٠٪</span></label>
     <div class="heard" id="heard"></div>
   </div>
 
@@ -276,7 +277,7 @@ const store = {
   set(v) { try { localStorage.setItem("qg", JSON.stringify(v)); } catch {} }
 };
 const S = Object.assign({ s: 1, a: 1, per: 3, size: 34, offset: 8, glow: 100, color: "#f3f1e7", base: -15,
-  auto: true, advance: false, follow: true, axis: "gaze", inv: false, nod: null }, store.get());
+  auto: true, advance: false, follow: true, axis: "gaze", inv: false, nod: null, lead: 80 }, store.get());
 if (S.axis === "learned" && !S.nod) S.axis = "gaze";
 const save = () => store.set(S);
 
@@ -356,7 +357,7 @@ function predictAhead() {
   if (!listening || !lastReal || curIdx < 0 || pick !== null) return;
   const dt = (performance.now() - lastReal.t) / 1000;
   if (dt > 2.5) return;                                             // silence: stop guessing
-  const ahead = Math.min(2, Math.floor(pace * dt * 0.8));           // stay a little behind speech
+  const ahead = Math.min(S.lead > 100 ? 3 : 2, Math.floor(pace * dt * S.lead / 100));   // S.lead: % of the reciter's pace
   let want = lastReal.idx + ahead;
   const a0 = Engine.pos(lastReal.idx);
   while (want > lastReal.idx && (Engine.pos(want).s !== a0.s || Engine.pos(want).a !== a0.a)) want--;   // never past the ayah
@@ -549,6 +550,7 @@ function applyLook() {
   ["per", "size", "offset", "glow"].forEach(k => $(k).value = S[k]);
   $("auto").checked = S.auto; $("advance").checked = S.advance; $("follow").checked = S.follow;
   $("axis").value = S.axis; $("inv").checked = S.inv;
+  $("lead").value = S.lead; $("leadv").textContent = AR(S.lead) + "٪";
   save(); fitText();
 }
 const LOOK_DEFAULTS = { per: 3, size: 34, offset: 8, glow: 100, color: "#f3f1e7" };
@@ -661,6 +663,7 @@ $("per").onchange = e => { S.per = Math.min(15, Math.max(1, +e.target.value || 1
 $("size").oninput = e => { S.size = +e.target.value; applyLook(); };
 $("offset").oninput = e => { S.offset = +e.target.value; applyLook(); };
 $("glow").oninput = e => { S.glow = +e.target.value; applyLook(); };
+$("lead").oninput = e => { S.lead = +e.target.value; applyLook(); };
 $("resetLook").onclick = () => { Object.assign(S, LOOK_DEFAULTS); applyLook(); render(); toast("رجعت إعدادات العرض إلى الافتراضي"); };
 document.querySelectorAll(".sw").forEach(b => b.onclick = () => { S.color = b.dataset.c; applyLook(); });
 $("auto").onchange = e => { S.auto = e.target.checked; save(); };
