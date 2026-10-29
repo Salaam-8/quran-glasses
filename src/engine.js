@@ -86,13 +86,24 @@ const Engine = (function () {
      mode 'local' searches near the cursor; 'surah' the whole current surah; 'global' the whole Quran. */
   function locate(text, cursor, surah, mode) {
     const sp = spoken(text).slice(-8);
-    if (sp.length < 2) return null;
     if (mode === "local") {
+      // Fast path for short interim results: the last heard word is one of the next three expected
+      // words (and the word before it fits too). Moves the highlight word by word with no wait.
+      if (sp.length >= 1 && sp.length <= 2) {
+        const last = sp[sp.length - 1];
+        for (let k = 0; k < 3 && cursor + k < SEND[surah]; k++)
+          if (sim(last, KEYS[cursor + k]) >= 0.85 && (sp.length === 1 || k === 0 || sim(sp[0], KEYS[cursor + k - 1]) >= 0.6)) return cursor + k;
+      }
+      if (sp.length < 2) return null;
       const lo = Math.max(SSTART[surah], cursor - 6), hi = Math.min(SEND[surah], cursor + 40);
       const r = align(sp, lo, hi);
       const need = sp.length >= 3 ? 3 : 2.2;
-      return r.score >= need ? r.end : null;
+      // Prefer places near the cursor: a noisy phrase that happens to echo common words 30 words
+      // ahead must score clearly higher than a nearby match to win.
+      const adj = r.score - Math.max(0, r.end - cursor - 10) * 0.08;
+      return adj >= need ? r.end : null;
     }
+    if (sp.length < 2) return null;
     // 'lost': compare the best place in the current surah with the best place in the whole Quran
     if (sp.length < 4) return null;
     const rg = align(sp, 0, KEYS.length);
@@ -102,6 +113,20 @@ const Engine = (function () {
     if (gOk && (!sOk || rg.score > rs.score + 0.5)) return rg.end;
     if (sOk && rs.score >= rg.score - 0.5) return rs.end;
     return null;
+  }
+
+  /* Among the recogniser's alternatives for one utterance, pick the one that fits the text near the
+     cursor best. Google's first choice is a prior: ties keep it. Returns the index into texts. */
+  function bestAlternative(texts, cursor, surah) {
+    let bi = 0, bs = -Infinity;
+    const lo = Math.max(SSTART[surah], cursor - 6), hi = Math.min(SEND[surah], cursor + 40);
+    texts.forEach((t, i) => {
+      const sp = spoken(t).slice(-8);
+      if (!sp.length) return;
+      const sc = align(sp, lo, hi).score;
+      if (sc > bs + 0.01) { bs = sc; bi = i; }
+    });
+    return bi;
   }
 
   /* Voice command "سورة <name>" → surah number, or null. */
@@ -125,7 +150,7 @@ const Engine = (function () {
   }
 
   return {
-    build, locate, surahCommand, norm,
+    build, locate, bestAlternative, surahCommand, norm,
     pos: i => ({ s: SUR[i], a: AYA[i] }),
     first: (s, a) => { const r = TOK[s][a - 1].find(x => x >= 0); return r === undefined ? SSTART[s] : r; },
     tokens: (s, a) => TOK[s][a - 1],

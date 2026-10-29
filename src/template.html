@@ -360,7 +360,10 @@ function onHeard(text, isFinal, latest) {
   let i = Engine.locate(text, cursor, S.s, "local");
   if (i == null && isFinal) {
     miss++;
-    i = Engine.locate(text, cursor, S.s, "lost");
+    // A single short unmatched phrase is usually noise or a slip; search the whole Quran only after
+    // a second miss, or at once when the phrase is long enough to be unambiguous.
+    const nLatest = Engine.norm(latest).split(" ").filter(Boolean).length;
+    if (miss >= 2 || nLatest >= 5) i = Engine.locate(text, cursor, S.s, "lost");
   }
   if (i != null) setPos(i);
 }
@@ -385,11 +388,17 @@ function noSpeechHint() {
 function startMic() {
   if (!SR) { micStatus(noSpeechHint(), "hide"); return; }
   rec = new SR();
-  rec.lang = "ar-SA"; rec.continuous = true; rec.interimResults = true; rec.maxAlternatives = 1;
+  rec.lang = "ar-SA"; rec.continuous = true; rec.interimResults = true; rec.maxAlternatives = 3;
   rec.onresult = e => {
     let interim = "";
     for (let k = e.resultIndex; k < e.results.length; k++) {
-      const r = e.results[k], tx = r[0].transcript;
+      const r = e.results[k];
+      let tx = r[0].transcript;
+      if (r.isFinal && r.length > 1) {
+        // the recogniser's 2nd/3rd guess is often the right Quranic wording: keep the one that fits here
+        const alts = []; for (let a = 0; a < r.length; a++) if (r[a].transcript) alts.push(r[a].transcript);
+        tx = alts[Engine.bestAlternative(alts.map(x => finalBuf + " " + x), cursor, S.s)] || tx;
+      }
       if (r.isFinal) {
         finalBuf = (finalBuf + " " + tx).trim().split(/\s+/).slice(-16).join(" ");
         onHeard(finalBuf, true, tx);
@@ -412,7 +421,7 @@ function startMic() {
   };
   rec.onstart = () => micStatus("يستمع…", "show");
   rec.onend = () => {
-    if (listening) setTimeout(() => { try { rec.start(); } catch {} }, 250);
+    if (listening) setTimeout(() => { try { rec.start(); } catch {} }, 50);   // short gap: Android ends recognition after every pause
     else micStatus("الصوت متوقف");
   };
   listening = true; resync(); micStatus("جاري التشغيل…");

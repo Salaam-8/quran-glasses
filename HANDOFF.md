@@ -16,7 +16,7 @@ src/viture.js         VITURE glasses IMU over WebHID, no vendor SDK (Gen2 = Pro 
 data/quran.json       Uthmani text, 114 surahs / 6236 ayahs (npm quran-json@3.1.2, CC-BY-4.0, text from QuranEnc)
 assets/               Amiri Quran woff2 (SIL OFL), app icons
 build.py              builds dist/ (standard library only)
-tests/test_engine.js  26 matcher tests against the real text (node, no deps)
+tests/test_engine.js  34 matcher tests against the real text (node, no deps)
 tests/test_viture.js  38 IMU driver tests: byte-exact frames, quaternion → head angle (node, no deps)
 tests/test_browser.js 21 end-to-end tests, desktop + emulated phone (needs playwright)
 dist/                 build output (committed so GitHub Pages can serve dist/app)
@@ -62,7 +62,7 @@ Outputs:
 
 ## Not done / open items (priority order)
 
-1. ~~Host the PWA on GitHub Pages.~~ **Done (2026-10-29).** Private repo `Salaam-8/quran-glasses`, published by `.github/workflows/pages.yml` (Pages source = GitHub Actions) on every push to `main`. Live: https://salaam-8.github.io/quran-glasses/ ; manifest and sw.js verified 200 in Chrome. Bump `CACHE` in `build.py` on every deploy (now v12).
+1. ~~Host the PWA on GitHub Pages.~~ **Done (2026-10-29).** Private repo `Salaam-8/quran-glasses`, published by `.github/workflows/pages.yml` (Pages source = GitHub Actions) on every push to `main`. Live: https://salaam-8.github.io/quran-glasses/ ; manifest and sw.js verified 200 in Chrome. Bump `CACHE` in `build.py` on every deploy (now v13).
 2. **Glasses IMU: implemented, needs a real-device check.** `src/viture.js` talks to the glasses over WebHID
    without the vendor SDK (its browser build has no public download). Protocol sources:
    - Gen2 / Pro 2 (`35CA:1301`): https://github.com/elasticjava/viture-v2/blob/main/PROTOCOL.md — one HID interface,
@@ -85,7 +85,19 @@ Outputs:
    WebHID is desktop Chrome only; on phones the IMU still needs a native app.
    Still open: does the learned mapping hold through a full rak'ah (ruku ≈ −60°+, sujood ≈ −90°) and is the 20°/35° band right?
 3. **Glasses buttons.** Unknown whether the Pro 2 volume rocker sends key events to the host. Test it with `addEventListener('keydown', e => console.log(e.code, e.key))` while pressing the buttons. Don't use the 2D/3D button: it switches the display to side-by-side mode. In a native Android app, the volume keys or the SDK state stream could work as page turns.
-4. **Real-world speech accuracy is untested.** Chrome's Web Speech sends audio to Google, so it needs internet. A corporate proxy may block it, and tajweed and madd may lower accuracy. If accuracy is poor, consider on-device `tarteel-ai/whisper-base-ar-quran` (Apache-2.0, reported WER about 5.75%).
+4. **Real-world speech: works on a Galaxy S24 Ultra in Chrome (2026-10-29)**, but the owner reported lag and
+   fragility in noise. Changes made in response (all unit-tested in `tests/test_engine.js`):
+   - Interim fast path: 1–2 heard words that equal one of the next three expected words move the highlight at once
+     (before, two aligned words were required, so the highlight waited for the recogniser's second word).
+   - N-best: `maxAlternatives = 3`; for final results `Engine.bestAlternative()` keeps the alternative that aligns
+     best near the cursor. Google's first guess for Quranic wording is often the wrong homophone.
+   - Distance prior in local mode: matches more than 10 words past the cursor lose 0.08/word, so a noisy phrase that
+     echoes common words ahead no longer jumps the cursor.
+   - Lost (whole-Quran) search now needs two consecutive misses, or one miss with ≥5 heard words.
+   - Recognition restart gap after `onend` cut from 250 ms to 50 ms (Android ends recognition after every pause).
+   Still inherent: Chrome sends audio to Google, so ~0.5–1 s latency and a start beep on Android remain. Next step
+   if still not good enough: on-device `tarteel-ai/whisper-base-ar-quran` (Apache-2.0, WER ≈ 5.75%) in a native app,
+   or lowering `sim` thresholds after collecting real transcripts (log `#heard` text during a real session).
 5. Android Chrome may play a sound each time recognition restarts. iOS Safari speech support is limited. Check both on real devices.
 6. Threshold tuning: posture bands (show within −20°, hide below −35° of the calibrated qiyam angle) and the matcher scores need real-world data.
 

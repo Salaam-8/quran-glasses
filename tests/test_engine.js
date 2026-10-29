@@ -16,6 +16,17 @@ t('baqarah 2:3', show(E.locate('الذين يؤمنون بالغيب ويقيم�
 t('baqarah 2:5', show(E.locate('أولئك على هدى من ربهم وأولئك هم المفلحون', E.first(2, 4), 2, 'local')), '2:5');
 // interim with a cut-off last word
 t('interim cut', show(E.locate('ذلك الكتاب لا ريب فيه هدى للمت', E.first(2, 2), 2, 'local')), '2:2');
+// fast path: short interim results move word by word
+t('interim one word at cursor', show(E.locate('الحمد', E.first(1, 2), 1, 'local')), '1:2');
+t('interim next word', show(E.locate('لله', E.first(1, 2) + 1, 1, 'local')), '1:2');
+t('interim two words', show(E.locate('رب العالمين', E.first(1, 2) + 1, 1, 'local')), '1:2');
+t('interim one unexpected word', show(E.locate('كتاب', E.first(1, 2), 1, 'local')), 'NONE');
+t('interim one word lookahead of 3 only', show(E.locate('الدين', E.first(1, 2), 1, 'local')), 'NONE');
+// n-best: keep the alternative that fits the text near the cursor
+t('best alternative', E.bestAlternative(['الحمد لك يا رب', 'الحمد لله رب العالمين', 'احمد الله'], E.first(1, 2), 1), 1);
+t('best alternative keeps first on tie', E.bestAlternative(['الحمد لله رب العالمين', 'الحمد لله رب العالمين'], E.first(1, 2), 1), 0);
+t('far noisy echo refused', show(E.locate('من الذين في', E.first(2, 1), 2, 'local')), 'NONE');
+
 // global find from cold start
 t('global kahf 18:1', show(E.locate('الحمد لله الذي أنزل على عبده الكتاب ولم يجعل له عوجا', 0, 1, 'lost')), '18:1');
 t('global yasin 36:2', show(E.locate('يس والقرآن الحكيم إنك لمن المرسلين', 0, 1, 'lost')), '36:3');
