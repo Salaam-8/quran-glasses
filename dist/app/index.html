@@ -742,9 +742,13 @@ function startMic() {
     if (interim) onHeard(finalBuf + " " + interim, false, interim);
   };
   rec.onerror = e => {
-    if (e.error === "not-allowed" || e.error === "service-not-allowed") {
+    if (e.error === "not-allowed") {
       listening = false;
-      micStatus("المايك مرفوض. افتح الصفحة من رابطها (https) واسمح للمايك", "hide");
+      micStatus(STANDALONE ? "المايك مرفوض. إعدادات الجوال ← التطبيقات ← مصحف النظارة ← الأذونات ← الميكروفون ← السماح"
+                           : "المايك مرفوض. اضغط القفل بجانب الرابط ← الأذونات ← الميكروفون ← السماح، ثم أعد التحميل", "hide");
+    } else if (e.error === "service-not-allowed") {
+      listening = false;
+      micStatus("خدمة التعرف على الصوت معطّلة في هذا المتصفح. تأكد أن تطبيق Google مفعّل وأن Chrome له إذن الميكروفون", "hide");
     } else if (e.error === "network") micStatus("التعرف على الصوت يحتاج إنترنت", "hide");
     else if (e.error === "audio-capture") { listening = false; micStatus("ما فيه مايك متصل", "hide"); }
     else if (e.error === "language-not-supported") { listening = false; micStatus("هذا المتصفح لا يدعم العربية في التعرف على الصوت", "hide"); }
