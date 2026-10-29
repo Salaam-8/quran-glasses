@@ -48,6 +48,16 @@ const t = (name, got, want) => {
     t("picker closed", await p.isVisible("#picker"), false);
     await p.keyboard.press("PageDown");
     t("PageDown next page", await head(), "سورة يس · الآيات ٤–٦ من ٨٣");
+    // glasses IMU: feed a synthetic Gen2 pose frame (head down 40°) straight into the WebHID handler
+    const imuPitch = await p.evaluate(() => {
+      const imu = QuranGlasses.imu; imu.gen = 2;
+      const h = -40 * Math.PI / 360, q = [Math.cos(h), Math.sin(h), 0, 0];
+      const pl = new Uint8Array(24), dv = new DataView(pl.buffer); q.forEach((v, i) => dv.setFloat32(8 + 4 * i, v, true));
+      const f = new Uint8Array(64); f.set(VitureIMU.gen2Frame(0x7308, pl));
+      imu._onReport({ data: new DataView(f.buffer) });
+      return document.getElementById("pitchv").textContent + " " + document.getElementById("src").textContent;
+    });
+    t("IMU frame drives posture", imuPitch, "-40° المصدر: حساس النظارة");
     t("no page errors", errs.length, 0);
     await p.close();
   }

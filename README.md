@@ -10,6 +10,7 @@
 ```bash
 py build.py                 # Windows (python3 build.py elsewhere)
 node tests/test_engine.js
+node tests/test_viture.js
 npm install && npx playwright install chromium && node tests/test_browser.js
 ```
 

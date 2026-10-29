@@ -26,11 +26,14 @@ def build_single_file() -> str:
     font = base64.b64encode((ASSETS / "amiri-quran-arabic-400-normal.woff2").read_bytes()).decode()
     engine = (SRC / "engine.js").read_text(encoding="utf-8").replace(
         'if (typeof module !== "undefined") module.exports = Engine;', "")
+    viture = (SRC / "viture.js").read_text(encoding="utf-8").replace(
+        'if (typeof module !== "undefined") module.exports = VitureIMU;', "")
     t = (SRC / "template.html").read_text(encoding="utf-8")
-    for ph in ("/*ENGINE*/", "/*QURAN_DATA*/[]", "/*FONT_B64*/"):
+    for ph in ("/*ENGINE*/", "/*VITURE*/", "/*QURAN_DATA*/[]", "/*FONT_B64*/"):
         assert ph in t, f"placeholder {ph} missing from template.html"
     return (t.replace("/*FONT_B64*/", font)
              .replace("/*ENGINE*/", engine)
+             .replace("/*VITURE*/", viture)
              .replace("/*QURAN_DATA*/[]", json.dumps(data, ensure_ascii=False, separators=(",", ":"))))
 
 
@@ -63,7 +66,7 @@ MANIFEST = {
 }
 
 # Bump CACHE whenever you deploy so phones pick up the new version.
-SERVICE_WORKER = """const CACHE = "quran-glasses-v5";
+SERVICE_WORKER = """const CACHE = "quran-glasses-v6";
 const FILES = ["./", "index.html", "manifest.webmanifest", "icon-192.png", "icon-512.png"];
 self.addEventListener("install", e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES))); self.skipWaiting(); });
 self.addEventListener("activate", e => {

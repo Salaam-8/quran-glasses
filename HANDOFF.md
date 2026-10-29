@@ -12,16 +12,18 @@ Hardware: **VITURE Pro 2** (birdbath optics, 3DoF IMU, no camera, no onboard com
 ```
 src/template.html     UI, styles and app logic (placeholders get filled by build.py)
 src/engine.js         recitation matcher: speech text → position in the Quran (pure JS, also runs in Node)
+src/viture.js         VITURE glasses IMU over WebHID, no vendor SDK (Gen2 = Pro 2, Gen1 fallback; pure parts run in Node)
 data/quran.json       Uthmani text, 114 surahs / 6236 ayahs (npm quran-json@3.1.2, CC-BY-4.0, text from QuranEnc)
 assets/               Amiri Quran woff2 (SIL OFL), app icons
 build.py              builds dist/ (standard library only)
 tests/test_engine.js  26 matcher tests against the real text (node, no deps)
-tests/test_browser.js 17 end-to-end tests, desktop + emulated phone (needs playwright)
+tests/test_viture.js  22 IMU driver tests: byte-exact frames, quaternion → head angle (node, no deps)
+tests/test_browser.js 18 end-to-end tests, desktop + emulated phone (needs playwright)
 dist/                 build output (committed so GitHub Pages can serve dist/app)
 ```
 
 Build: `py build.py` on Windows, or `python3 build.py`.
-Test: `node tests/test_engine.js` and `npm i && npx playwright install chromium && node tests/test_browser.js`.
+Test: `node tests/test_engine.js`, `node tests/test_viture.js` and `npm i && npx playwright install chromium && node tests/test_browser.js`.
 
 Outputs:
 - `dist/quran-glasses.html`: a single self-contained file of about 1.4 MB. It embeds the text, the font and the engine.
@@ -44,7 +46,8 @@ Outputs:
 | Surah picker in glasses | `S` / `.` / `B` opens it; arrows / PageUp / PageDown move; digits jump; Enter opens | browser test |
 | Manual paging any time | ← / Space / PageDown = next, → / PageUp = prev; voice resumes from the new page | browser test |
 | Phone touch | tap left 30% = next, right 30% = prev, swipe right = next, swipe left = prev, long-press = surah list, center tap = on-screen buttons (exit / surahs / mic) | emulated Pixel 7 |
-| Posture auto-hide | text hides when the head drops (ruku/sujood) and returns at qiyam; calibration button | **simulation slider only** |
+| Posture auto-hide | text hides when the head drops (ruku/sujood) and returns at qiyam; calibration button | simulation slider + synthetic IMU frame in browser test |
+| Glasses IMU | «ربط حساس النظارة» button → WebHID chooser → pose stream 120 Hz → head angle → posture engine. Auto-reconnects on reload. | **unit + browser tests only, not yet on real glasses** |
 
 ### Matcher design (src/engine.js)
 - Normalize: strip tashkeel and Quranic marks; unify ٱأإآ→ا, ى→ي, ة→ه, ؤ→و, ئ→ي. The "key" also drops ا and ء, so dagger-alef and hamza spelling differences between Uthmani and plain dictation disappear.
@@ -59,8 +62,20 @@ Outputs:
 
 ## Not done / open items (priority order)
 
-1. ~~Host the PWA on GitHub Pages.~~ **Done (2026-10-29).** Private repo `Salaam-8/quran-glasses`, published by `.github/workflows/pages.yml` (Pages source = GitHub Actions) on every push to `main`. Live: https://salaam-8.github.io/quran-glasses/ ; manifest and sw.js verified 200 in Chrome. Bump `CACHE` in `build.py` on every deploy (now v4).
-2. **Glasses IMU is not connected.** The hook is ready: `window.QuranGlasses.pushPose({ pitch })`, with pitch in degrees (0 = looking ahead, negative = head down). The VITURE browser SDK (TypeScript over WASM, via WebHID, Chrome only) is not on npm, and its docs aren't public. Get it from VITURE's developer portal: https://www.viture.com/developer/glasses-sdk/glasses. VITURE USB vendor ID is `0x35CA`, and the Pro 2 is a "Gen2" device. WebHID is desktop Chrome only, so on phones the IMU needs a native app.
+1. ~~Host the PWA on GitHub Pages.~~ **Done (2026-10-29).** Private repo `Salaam-8/quran-glasses`, published by `.github/workflows/pages.yml` (Pages source = GitHub Actions) on every push to `main`. Live: https://salaam-8.github.io/quran-glasses/ ; manifest and sw.js verified 200 in Chrome. Bump `CACHE` in `build.py` on every deploy (now v6).
+2. **Glasses IMU: implemented, needs a real-device check.** `src/viture.js` talks to the glasses over WebHID
+   without the vendor SDK (its browser build has no public download). Protocol sources:
+   - Gen2 / Pro 2 (`35CA:1301`): https://github.com/elasticjava/viture-v2/blob/main/PROTOCOL.md — one HID interface,
+     frame `0x0010 | msgid | len | byte-sum | payload` (LE). We send `10 00 01 03 02 00 03 00 01 02` (pose stream, 120 Hz)
+     and parse `0x7308` pose events (u32, u32 tick, f32 qw qx qy qz). Nothing else is needed.
+   - Gen1 (One / Pro / Luma): https://github.com/bfvogel/viture-webxr-extension (0xFF 0xFC euler frames, CRC-16 commands). Untested.
+   Head angle: default «اتجاه النظر» = elevation of the gaze vector (device −Z, Y up), heading-independent.
+   The «محور الميلان» select (X/Y/Z euler) and «عكس الإشارة» checkbox exist so the mapping can be fixed on the device
+   without a redeploy; the row shows live X/Y/Z/gaze angles. **To verify:** connect the Pro 2 to the laptop, open the
+   site in desktop Chrome, click «ربط حساس النظارة», pick the glasses in the chooser, nod: the gaze angle must go negative
+   when the head drops. If it goes positive, tick «عكس الإشارة». If nothing moves, pick the axis whose number changes.
+   If the status says «ما وصلت قراءات», the glasses may be held by another app (VITURE SpaceWalker / Immersive 3D) — close it.
+   WebHID is desktop Chrome only; on phones the IMU still needs a native app.
 3. **Glasses buttons.** Unknown whether the Pro 2 volume rocker sends key events to the host. Test it with `addEventListener('keydown', e => console.log(e.code, e.key))` while pressing the buttons. Don't use the 2D/3D button: it switches the display to side-by-side mode. In a native Android app, the volume keys or the SDK state stream could work as page turns.
 4. **Real-world speech accuracy is untested.** Chrome's Web Speech sends audio to Google, so it needs internet. A corporate proxy may block it, and tajweed and madd may lower accuracy. If accuracy is poor, consider on-device `tarteel-ai/whisper-base-ar-quran` (Apache-2.0, reported WER about 5.75%).
 5. Android Chrome may play a sound each time recognition restarts. iOS Safari speech support is limited. Check both on real devices.

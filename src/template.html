@@ -188,11 +188,26 @@ details.api pre {
     <span class="chip show" id="state">قيام · النص ظاهر</span>
     <span>ميلان الرأس <span class="num" id="pitchv">0°</span></span>
     <div class="gauge" aria-hidden="true"><i id="gHide"></i><i id="gShow"></i><b id="gNow"></b></div>
-    <label class="f">محاكاة <input id="sim" type="range" min="-100" max="20" value="-15"></label>
+    <label class="f" id="simw">محاكاة <input id="sim" type="range" min="-100" max="20" value="-15"></label>
     <button class="btn" id="calib" title="قف وانظر لموضع السجود ثم اضغط">معايرة وضع القيام</button>
     <label class="f"><input id="auto" type="checkbox" checked> إخفاء تلقائي بالركوع والسجود</label>
     <label class="f"><input id="advance" type="checkbox"> الصفحة التالية بعد السجود</label>
     <span class="f" id="src">المصدر: محاكاة</span>
+  </div>
+
+  <div class="row sep">
+    <button class="btn" id="hid" title="يطلب Chrome الإذن للوصول إلى النظارة عبر WebHID">ربط حساس النظارة</button>
+    <span class="f" id="hidst">غير موصولة</span>
+    <label class="f">محور الميلان
+      <select id="axis">
+        <option value="gaze">تلقائي: اتجاه النظر</option>
+        <option value="x">زاوية X</option>
+        <option value="y">زاوية Y</option>
+        <option value="z">زاوية Z</option>
+      </select>
+    </label>
+    <label class="f"><input id="inv" type="checkbox"> عكس الإشارة</label>
+    <span class="f num" id="angles" style="min-width:0"></span>
   </div>
 
   <details class="api">
@@ -204,7 +219,9 @@ V                      تشغيل وإيقاف تتبّع الصوت
 G                      وضع النظارة
 بالصوت: قل «سورة الكهف» لفتح أي سورة، أو ابدأ القراءة وتلقى الصفحة موضعك
 
-// ربط IMU: استدعِ هذا من callback الخاص بـ VITURE SDK مع كل قراءة
+حساس النظارة: زر «ربط حساس النظارة» يطلب الإذن عبر WebHID (Chrome على الكمبيوتر، والصفحة على https).
+بعد الإذن الأول تتصل النظارة تلقائيًا عند فتح الصفحة. إن انعكست الإشارة (النص يختفي عند رفع الرأس) فعّل «عكس الإشارة».
+// واجهة برمجية بديلة لأي مصدر آخر للحساس:
 // pitch بالدرجات: 0 = النظر للأمام، السالب = خفض الرأس
 window.QuranGlasses.pushPose({ pitch: -18.4 });</pre>
   </details>
@@ -227,6 +244,9 @@ window.QuranGlasses.pushPose({ pitch: -18.4 });</pre>
 /*ENGINE*/
 </script>
 <script>
+/*VITURE*/
+</script>
+<script>
 const Q = /*QURAN_DATA*/[];
 Engine.build(Q);
 const $ = id => document.getElementById(id);
@@ -238,7 +258,7 @@ const store = {
   set(v) { try { localStorage.setItem("qg", JSON.stringify(v)); } catch {} }
 };
 const S = Object.assign({ s: 1, a: 1, per: 3, size: 34, offset: 8, glow: 100, color: "#f3f1e7", base: -15,
-  auto: true, advance: false, follow: true }, store.get());
+  auto: true, advance: false, follow: true, axis: "gaze", inv: false }, store.get());
 const save = () => store.set(S);
 
 let toastT;
@@ -421,6 +441,7 @@ function applyLook() {
   document.querySelectorAll(".sw").forEach(b => b.setAttribute("aria-pressed", b.dataset.c === S.color));
   ["per", "size", "offset", "glow"].forEach(k => $(k).value = S[k]);
   $("auto").checked = S.auto; $("advance").checked = S.advance; $("follow").checked = S.follow;
+  $("axis").value = S.axis; $("inv").checked = S.inv;
   save();
 }
 
@@ -457,7 +478,40 @@ function onPitch(p, source) {
 }
 setInterval(() => onPitch(pitch), 100);
 
+/* ---------- glasses IMU over WebHID (src/viture.js) ---------- */
+const imu = new VitureIMU.Session();
+let imuAt = 0;
+imu.onPose = s => {
+  const now = performance.now();
+  if (now - imuAt < 50) return;                      // ~20 Hz is plenty for posture
+  imuAt = now;
+  onPitch(VitureIMU.headPitch(s, S.axis, S.inv), "حساس النظارة");
+  const e = s.q ? VitureIMU.euler(s.q) : s.euler;
+  const g = s.q ? VitureIMU.gazePitch(s.q) : s.pitch;
+  $("angles").textContent = `X ${e.x.toFixed(0)}° · Y ${e.y.toFixed(0)}° · Z ${e.z.toFixed(0)}° · نظر ${g.toFixed(0)}°`;
+};
+function hidStatus(st, msg) {
+  const on = imu.connected;
+  $("hid").textContent = on ? "فصل النظارة" : "ربط حساس النظارة";
+  $("simw").hidden = on;
+  $("hidst").textContent = msg || { connected: `موصولة: ${imu.name}`, nodata: `موصولة (${imu.name}) لكن ما وصلت قراءات. افصل الكابل وأعد وصله`,
+    disconnected: "انقطعت النظارة" }[st] || st;
+  if (st === "connected") toast(`تم ربط ${imu.name}`);
+  if (st === "disconnected") { toast("انقطع حساس النظارة"); $("angles").textContent = ""; }
+}
+imu.onStatus = hidStatus;
+$("hid").onclick = async () => {
+  if (imu.connected) { await imu.close(); hidStatus("", "غير موصولة"); return; }
+  try { await imu.connect(); } catch (e) { hidStatus("", e.message); }
+};
+$("axis").onchange = e => { S.axis = e.target.value; save(); };
+$("inv").onchange = e => { S.inv = e.target.checked; save(); };
+if (VitureIMU.supported()) imu.reconnect().catch(() => {});
+else { $("hid").disabled = true; $("hidst").textContent = "WebHID يحتاج Chrome على الكمبيوتر"; }
+addEventListener("pagehide", () => { imu.close(); });
+
 window.QuranGlasses = {
+  imu,
   pushPose({ pitch: p }) { if (typeof p === "number" && isFinite(p)) onPitch(p, "حساس النظارة"); },
   next: () => page(1), prev: () => page(-1),
   goto(s, a = 1) { S.s = s; S.a = a; resync(); render(); },
