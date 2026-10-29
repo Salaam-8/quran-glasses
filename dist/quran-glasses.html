@@ -86,7 +86,7 @@ details.api pre {
   position: absolute; left: 0; right: 0; bottom: var(--offset, 8%);
   margin-inline: auto; width: min(92%, 62em);
   padding-inline: max(16px, env(safe-area-inset-left, 0px));
-  font-family: var(--f-quran); color: var(--verse); font-size: var(--size, 34px);
+  font-family: var(--f-quran); color: var(--verse); font-size: calc(var(--size, 34px) * var(--fit, 1));
   line-height: 2.1; text-align: justify; text-align-last: center; direction: rtl;
   opacity: var(--glow, 1); transition: opacity .25s ease;
 }
@@ -177,6 +177,7 @@ details.api pre {
     <label class="f">حجم الخط <input id="size" type="range" min="20" max="72" value="34"></label>
     <label class="f">الارتفاع <input id="offset" type="range" min="0" max="60" value="8"></label>
     <label class="f">السطوع <input id="glow" type="range" min="20" max="100" value="100"></label>
+    <button class="btn" id="resetLook" title="يعيد الخط والارتفاع والسطوع واللون وعدد الآيات إلى الافتراضي">استعادة الافتراضي</button>
     <div class="swatches" role="group" aria-label="لون النص">
       <button class="sw" data-c="#f3f1e7" style="background:#f3f1e7" aria-label="أبيض"></button>
       <button class="sw" data-c="#7fe0a6" style="background:#7fe0a6" aria-label="أخضر"></button>
@@ -619,8 +620,18 @@ function render() {
   }
   $("text").innerHTML = html;
   surahSel.value = S.s; $("ayah").value = S.a; $("ayah").max = total;
-  highlight(); save();
+  highlight(); save(); fitText();
 }
+
+/* Shrink the font just enough that the page never grows past the top of the stage,
+   whatever the size and offset sliders say. Re-run on resize and when the bar hides. */
+function fitText() {
+  const st = $("stage"), tx = $("text"), r = document.documentElement.style;
+  r.setProperty("--fit", 1);
+  const avail = st.clientHeight * (1 - S.offset / 100) - 8, need = tx.scrollHeight;
+  if (need > avail && need > 0) r.setProperty("--fit", Math.max(0.25, avail / need).toFixed(3));
+}
+new ResizeObserver(() => fitText()).observe($("stage"));
 
 /* ---------- voice tracking ---------- */
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -775,8 +786,9 @@ function applyLook() {
   ["per", "size", "offset", "glow"].forEach(k => $(k).value = S[k]);
   $("auto").checked = S.auto; $("advance").checked = S.advance; $("follow").checked = S.follow;
   $("axis").value = S.axis; $("inv").checked = S.inv;
-  save();
+  save(); fitText();
 }
+const LOOK_DEFAULTS = { per: 3, size: 34, offset: 8, glow: 100, color: "#f3f1e7" };
 
 /* ---------- posture engine ----------
    Show text while the head is near the calibrated qiyam angle; hide when it drops well below it.
@@ -878,6 +890,7 @@ $("per").onchange = e => { S.per = Math.min(15, Math.max(1, +e.target.value || 1
 $("size").oninput = e => { S.size = +e.target.value; applyLook(); };
 $("offset").oninput = e => { S.offset = +e.target.value; applyLook(); };
 $("glow").oninput = e => { S.glow = +e.target.value; applyLook(); };
+$("resetLook").onclick = () => { Object.assign(S, LOOK_DEFAULTS); applyLook(); render(); toast("رجعت إعدادات العرض إلى الافتراضي"); };
 document.querySelectorAll(".sw").forEach(b => b.onclick = () => { S.color = b.dataset.c; applyLook(); });
 $("auto").onchange = e => { S.auto = e.target.checked; save(); };
 $("advance").onchange = e => { S.advance = e.target.checked; save(); };
