@@ -62,16 +62,31 @@ near("headPitch inverted", V.headPitch({ q: headYawPitch }, "gaze", true), -20);
   t("learnNod rejects no motion", V.learnNod(A, A), null);
 }
 
-// ---- Gen1 frames ----
-const c1 = V.gen1ImuCommand(true);
-t("gen1 cmd length", c1.length, 20);
-t("gen1 cmd header/cmd/data/end", [hex(c1.subarray(0, 2)), c1[4], c1[14], c1[18], c1[19]], ["ff fe", 14, 0x15, 1, 3]);
-t("gen1 cmd crc", (c1[2] << 8) | c1[3], V.crc16(c1, 4, c1.length - 4));
 function gen1Frame(a, b, c) {
   const f = new Uint8Array(64); f[0] = 0xff; f[1] = 0xfc;
   [a, b, c].forEach((v, i) => { const le = new Uint8Array(new Float32Array([v]).buffer); f.set(le.slice().reverse(), 18 + 4 * i); });
   return f;
 }
+// ---- learned nod on euler-only (Gen1) samples ----
+{
+  const A = V.gen1Parse(gen1Frame(100, 5, -2)), B = V.gen1Parse(gen1Frame(100, 7, -48));   // raw2 (x) drops by 46°
+  const nod = V.learnNod(A, B);
+  t("euler nod picks the moving angle", [nod.kind, nod.axis, nod.inv], ["e", "x", false]);
+  near("euler nod angle", nod.angle, 46);
+  near("euler nod at reference", V.nodPitch(A, nod), 0, 1e-6);
+  near("euler nod head down", V.nodPitch(B, nod), -46);
+  near("euler nod turned (z moves)", V.nodPitch(V.gen1Parse(gen1Frame(170, 5, -2)), nod), 0, 1e-6);
+  const up = V.learnNod(A, V.gen1Parse(gen1Frame(100, 5, 40)));                           // opposite sign convention
+  near("euler nod inverted convention", V.nodPitch(V.gen1Parse(gen1Frame(100, 5, 40)), up), -42);
+  near("euler nod wraps around 180", V.nodPitch(V.gen1Parse(gen1Frame(100, 5, 350)), nod), -8);
+  near("headPitch learned euler", V.headPitch(B, "learned", false, nod), -46);
+}
+
+// ---- Gen1 frames ----
+const c1 = V.gen1ImuCommand(true);
+t("gen1 cmd length", c1.length, 20);
+t("gen1 cmd header/cmd/data/end", [hex(c1.subarray(0, 2)), c1[4], c1[14], c1[18], c1[19]], ["ff fe", 14, 0x15, 1, 3]);
+t("gen1 cmd crc", (c1[2] << 8) | c1[3], V.crc16(c1, 4, c1.length - 4));
 const g1 = V.gen1Parse(gen1Frame(5, -40, 12));
 t("gen1 parse", [g1.type, g1.euler.z, g1.euler.y, g1.euler.x, g1.pitch], ["euler", 5, -40, 12, 12]);
 near("headPitch gen1 axis y", V.headPitch(g1, "y"), -40);

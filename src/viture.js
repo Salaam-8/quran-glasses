@@ -89,16 +89,33 @@ const VitureIMU = (() => {
   // Learn the nod axis from two poses: qA = looking ahead, qB = head down. Frame-agnostic: the
   // axis is taken from the body-frame rotation between them, so no assumption about which device
   // axis is up or forward. Returns { ref, n, angle } or null when the move was too small.
-  function learnNod(qA, qB) {
-    const d = quatMul(quatConj(qA), qB), s = d[0] < 0 ? -1 : 1;
-    const v = [d[1] * s, d[2] * s, d[3] * s], m = Math.hypot(v[0], v[1], v[2]);
-    const angle = 2 * Math.atan2(m, d[0] * s) * DEG;
-    if (m < 1e-6) return null;
-    return { ref: qA, n: v.map(x => x / m), angle };
+  function learnNod(a, b) {
+    const qA = a.q || (Array.isArray(a) ? a : null), qB = b.q || (Array.isArray(b) ? b : null);
+    if (qA && qB) {
+      const d = quatMul(quatConj(qA), qB), s = d[0] < 0 ? -1 : 1;
+      const v = [d[1] * s, d[2] * s, d[3] * s], m = Math.hypot(v[0], v[1], v[2]);
+      const angle = 2 * Math.atan2(m, d[0] * s) * DEG;
+      if (m < 1e-6) return null;
+      return { kind: "q", ref: qA, n: v.map(x => x / m), angle };
+    }
+    // Euler-only devices (Gen1 frames): pick the angle that moved most, signed so that head-down is negative.
+    if (!a.euler || !b.euler) return null;
+    let best = null;
+    for (const k of ["x", "y", "z"]) {
+      let d = b.euler[k] - a.euler[k]; d = ((d + 540) % 360) - 180;      // shortest way round
+      if (!best || Math.abs(d) > best.angle) best = { kind: "e", axis: k, inv: d > 0, angle: Math.abs(d), ref: a.euler[k] };
+    }
+    return best && best.angle > 1e-6 ? best : null;
   }
   // Twist of the body-frame rotation since `ref` about the learned nod axis: 0 at the reference,
   // negative with the head down. Turning the head (about the body-up axis) barely changes it.
-  function nodPitch(q, nod) {
+  function nodPitch(sample, nod) {
+    if (nod.kind === "e") {
+      if (!sample.euler) return NaN;
+      let d = sample.euler[nod.axis] - nod.ref; d = ((d + 540) % 360) - 180;
+      return nod.inv ? -d : d;
+    }
+    const q = sample.q || sample;
     const d = quatMul(quatConj(nod.ref), q), s = d[0] < 0 ? -1 : 1;
     const dot = (d[1] * nod.n[0] + d[2] * nod.n[1] + d[3] * nod.n[2]) * s;
     return -2 * Math.atan2(dot, d[0] * s) * DEG;
@@ -106,8 +123,10 @@ const VitureIMU = (() => {
   // axis: "learned" (needs nod), "gaze", "x", "y" or "z"; invert flips the sign.
   function headPitch(sample, axis = "gaze", invert = false, nod = null) {
     let p;
-    if (sample.q) p = axis === "learned" && nod ? nodPitch(sample.q, nod) : axis === "gaze" || axis === "learned" ? gazePitch(sample.q) : euler(sample.q)[axis];
+    if (axis === "learned" && nod) p = nodPitch(sample, nod);
+    else if (sample.q) p = axis === "gaze" || axis === "learned" ? gazePitch(sample.q) : euler(sample.q)[axis];
     else p = axis === "gaze" || axis === "learned" ? sample.pitch : sample.euler[axis];
+    if (!isFinite(p)) p = sample.q ? gazePitch(sample.q) : sample.pitch;
     return invert ? -p : p;
   }
 
@@ -117,7 +136,7 @@ const VitureIMU = (() => {
     constructor() { this.devices = []; this.gen = null; this.frames = 0; this.onPose = null; this.onStatus = null; this.lastAt = 0; }
     status(s) { this.onStatus?.(s); }
     get connected() { return this.devices.some(d => d.opened); }
-    get name() { const d = this.devices[0]; return d ? (NAMES[d.productId] || d.productName || "VITURE") : ""; }
+    get name() { const d = this.devices[0]; return d ? `${NAMES[d.productId] || d.productName || "VITURE"} · ${d.productId.toString(16)} · Gen${this.gen}` : ""; }
 
     // Prompts the chooser (needs a user gesture). Afterwards reconnect() works silently on reload.
     async connect() {

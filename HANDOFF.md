@@ -17,7 +17,7 @@ data/quran.json       Uthmani text, 114 surahs / 6236 ayahs (npm quran-json@3.1.
 assets/               Amiri Quran woff2 (SIL OFL), app icons
 build.py              builds dist/ (standard library only)
 tests/test_engine.js  26 matcher tests against the real text (node, no deps)
-tests/test_viture.js  30 IMU driver tests: byte-exact frames, quaternion → head angle (node, no deps)
+tests/test_viture.js  38 IMU driver tests: byte-exact frames, quaternion → head angle (node, no deps)
 tests/test_browser.js 18 end-to-end tests, desktop + emulated phone (needs playwright)
 dist/                 build output (committed so GitHub Pages can serve dist/app)
 ```
@@ -62,7 +62,7 @@ Outputs:
 
 ## Not done / open items (priority order)
 
-1. ~~Host the PWA on GitHub Pages.~~ **Done (2026-10-29).** Private repo `Salaam-8/quran-glasses`, published by `.github/workflows/pages.yml` (Pages source = GitHub Actions) on every push to `main`. Live: https://salaam-8.github.io/quran-glasses/ ; manifest and sw.js verified 200 in Chrome. Bump `CACHE` in `build.py` on every deploy (now v7).
+1. ~~Host the PWA on GitHub Pages.~~ **Done (2026-10-29).** Private repo `Salaam-8/quran-glasses`, published by `.github/workflows/pages.yml` (Pages source = GitHub Actions) on every push to `main`. Live: https://salaam-8.github.io/quran-glasses/ ; manifest and sw.js verified 200 in Chrome. Bump `CACHE` in `build.py` on every deploy (now v8).
 2. **Glasses IMU: implemented, needs a real-device check.** `src/viture.js` talks to the glasses over WebHID
    without the vendor SDK (its browser build has no public download). Protocol sources:
    - Gen2 / Pro 2 (`35CA:1301`): https://github.com/elasticjava/viture-v2/blob/main/PROTOCOL.md — one HID interface,
@@ -76,6 +76,10 @@ Outputs:
    `nodPitch(q, nod)` is the twist about that axis since the reference (0 = qiyam, negative = head down). This is
    frame-agnostic and immune to turning and to yaw drift (unit tests: turn 80° then nod 25° → −25°). Stored in
    `localStorage` as `S.nod`; «معايرة وضع القيام» afterwards only re-captures the reference pose.
+   **The user's glasses enumerate as a Gen1 device** (name shows «VITURE Pro», not «Pro 2»): Gen1 PID, `0xFF 0xFC`
+   Euler frames, no quaternion. So the teach-in also has a Euler mode (`kind: "e"`): it picks the Euler angle that moved
+   most between the two poses, signed so head-down is negative, with the reference value as zero. The status line now
+   shows `name · pid(hex) · GenN` for diagnosis.
    Fallbacks remain in the «محور الميلان» select (gaze / X / Y / Z) with «عكس الإشارة»; the row shows live angles.
    If the status says «ما وصلت قراءات», the glasses may be held by another app (VITURE SpaceWalker / Immersive 3D) — close it.
    WebHID is desktop Chrome only; on phones the IMU still needs a native app.
