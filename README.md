@@ -14,4 +14,6 @@ node tests/test_viture.js
 npm install && npx playwright install chromium && node tests/test_browser.js
 ```
 
+Voice tracking uses the browser's Web Speech API by default, or Azure Speech streaming with the reader's own key (see the in-app help panel).
+
 `dist/app/` is published by `.github/workflows/pages.yml` on every push to `main`. Bump `CACHE` in `build.py` before each deploy.

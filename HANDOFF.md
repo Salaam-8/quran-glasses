@@ -14,11 +14,11 @@ src/template.html     UI, styles and app logic (placeholders get filled by build
 src/engine.js         recitation matcher: speech text → position in the Quran (pure JS, also runs in Node)
 src/viture.js         VITURE glasses IMU over WebHID, no vendor SDK (Gen2 = Pro 2, Gen1 fallback; pure parts run in Node)
 data/quran.json       Uthmani text, 114 surahs / 6236 ayahs (npm quran-json@3.1.2, CC-BY-4.0, text from QuranEnc)
-assets/               Amiri Quran woff2 (SIL OFL), app icons
+assets/               Amiri Quran woff2 (SIL OFL), app icons, vendored Azure Speech SDK (MIT)
 build.py              builds dist/ (standard library only)
 tests/test_engine.js  34 matcher tests against the real text (node, no deps)
 tests/test_viture.js  38 IMU driver tests: byte-exact frames, quaternion → head angle (node, no deps)
-tests/test_browser.js 27 end-to-end tests, desktop + emulated phone (needs playwright)
+tests/test_browser.js 28 end-to-end tests, desktop + emulated phone (needs playwright)
 dist/                 build output (committed so GitHub Pages can serve dist/app)
 ```
 
@@ -38,7 +38,7 @@ Outputs:
 | Full text, Uthmani, offline | data + font embedded | 114/6236 asserted in build; render checked visually |
 | Display options | font size, vertical position, brightness, color, ayahs per page; «استعادة الافتراضي» resets them. The font auto-shrinks (`--fit`) so the page never overflows the top of the stage, whatever the sliders say | manual + headless worst-case check |
 | Glasses mode | `G` key / button: hides UI, fullscreen, wake lock; phones lock landscape | browser test |
-| Voice tracking | Web Speech API (`ar-SA`, continuous, interim) → `Engine.locate()` | 26 engine tests use typed text, not real audio |
+| Voice tracking | Web Speech API (`ar-SA`, continuous, interim) or Azure Speech streaming (user's own key) → `Engine.locate()` | engine tests use typed text; Azure path mocked in browser test |
 | Ayah/word highlight | current ayah full brightness, others dimmed; current word green + underlined | browser test |
 | Auto page turn | when the recited ayah is the last one on the page, the page rebases to it | browser test |
 | Find position anywhere | recite from anywhere and the engine locates you, even across surahs | engine + browser tests |
@@ -62,7 +62,7 @@ Outputs:
 
 ## Not done / open items (priority order)
 
-1. ~~Host the PWA on GitHub Pages.~~ **Done (2026-10-29).** Private repo `Salaam-8/quran-glasses`, published by `.github/workflows/pages.yml` (Pages source = GitHub Actions) on every push to `main`. Live: https://salaam-8.github.io/quran-glasses/ ; manifest and sw.js verified 200 in Chrome. Bump `CACHE` in `build.py` on every deploy (now v16).
+1. ~~Host the PWA on GitHub Pages.~~ **Done (2026-10-29).** Private repo `Salaam-8/quran-glasses`, published by `.github/workflows/pages.yml` (Pages source = GitHub Actions) on every push to `main`. Live: https://salaam-8.github.io/quran-glasses/ ; manifest and sw.js verified 200 in Chrome. Bump `CACHE` in `build.py` on every deploy (now v17).
 2. **Glasses IMU: implemented, needs a real-device check.** `src/viture.js` talks to the glasses over WebHID
    without the vendor SDK (its browser build has no public download). Protocol sources:
    - Gen2 / Pro 2 (`35CA:1301`): https://github.com/elasticjava/viture-v2/blob/main/PROTOCOL.md — one HID interface,
@@ -98,7 +98,19 @@ Outputs:
    - Predictive nudge: the pace (words/s) is measured between real recogniser updates; while waiting for the next
      update the `.now` word advances at `S.lead`% (slider «استباق التحديد», default 80, up to 150) of that pace, at most
      2 words (3 above 100%) and never past the current ayah, then snaps to the real position. Word highlight CSS transitions removed. The owner still felt a slight lag before this change.
-   Still inherent: Chrome sends audio to Google, so ~0.5–1 s latency and a start beep on Android remain. Next step
+   **Cloud engine (2026-10-29):** «محرك الصوت» select → *Azure سحابي*. `assets/azure-speech.js` is the vendored
+   Microsoft Speech SDK 1.52.0 browser bundle (MIT, `assets/LICENSE-azure-speech-sdk.txt`), copied to `dist/` and
+   `dist/app/` by `build.py` and loaded lazily. The browser streams the mic straight to Azure (`ar-SA`, Detailed
+   output → NBest → `Engine.bestAlternative`, segmentation silence 400 ms, end silence 600 ms) in one continuous
+   session: no Android restart beep, partials every few hundred ms, works in Samsung Internet and iOS Safari too.
+   A `PhraseListGrammar` is refreshed with the words and full text of the current + next 3 ayahs whenever the position
+   changes. The key + region live only in that browser's `localStorage` (`S.azKey`, `S.azRegion`, default
+   `uaenorth`); setup steps (Free F0 tier, 5 h/month) are in the in-app help panel. **Not yet verified with a real
+   key** (this session had no Azure access); the wiring is covered by a browser test with a mocked SDK.
+   Alternatives considered: Google Cloud STT streaming needs a relay server (no browser SDK); Deepgram has no streaming
+   Arabic; in-browser Whisper/Vosk is too slow or has no small Arabic model. The real low-latency design would be
+   forced alignment against the known text with a local CTC acoustic model — a research-sized task.
+   Still inherent for the browser engine: Chrome sends audio to Google, so ~0.5–1 s latency and a start beep on Android remain. Next step
    if still not good enough: on-device `tarteel-ai/whisper-base-ar-quran` (Apache-2.0, WER ≈ 5.75%) in a native app,
    or lowering `sim` thresholds after collecting real transcripts (log `#heard` text during a real session).
 5. Android Chrome may play a sound each time recognition restarts. iOS Safari speech support is limited. Check both on real devices.

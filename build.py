@@ -66,7 +66,7 @@ MANIFEST = {
 }
 
 # Bump CACHE whenever you deploy so phones pick up the new version.
-SERVICE_WORKER = """const CACHE = "quran-glasses-v16";
+SERVICE_WORKER = """const CACHE = "quran-glasses-v17";
 const FILES = ["./", "index.html", "manifest.webmanifest", "icon-192.png", "icon-512.png"];
 self.addEventListener("install", e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES))); self.skipWaiting(); });
 self.addEventListener("activate", e => {
@@ -96,6 +96,9 @@ def main():
     (app / ".nojekyll").write_text("", encoding="utf-8")
     for icon in ("icon-192.png", "icon-512.png"):
         shutil.copy(ASSETS / icon, app / icon)
+    # Azure Speech SDK (MIT), loaded lazily only when the cloud engine is selected
+    shutil.copy(ASSETS / "azure-speech.js", app / "azure-speech.js")
+    shutil.copy(ASSETS / "azure-speech.js", DIST / "azure-speech.js")
 
     print(f"dist/quran-glasses.html  {len(page.encode()) // 1024} KB")
     print("dist/app/                ", ", ".join(sorted(p.name for p in app.iterdir())))

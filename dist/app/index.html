@@ -196,6 +196,16 @@ details.api pre {
     <span class="chip" id="micState">الصوت متوقف</span>
     <label class="f"><input id="follow" type="checkbox" checked> قلب الصفحة مع القراءة</label>
     <label class="f" title="يحرّك التحديد للأمام بين نتائج التعرف بنسبة من سرعة تلاوتك. صفر = بلا استباق، ١٠٠٪ = بسرعة تلاوتك نفسها">استباق التحديد <input id="lead" type="range" min="0" max="150" step="10" value="80"> <span class="num" id="leadv">٨٠٪</span></label>
+    <label class="f">محرك الصوت
+      <select id="engine">
+        <option value="browser">المتصفح (Google عبر Chrome)</option>
+        <option value="azure">Azure سحابي (بلا طنين، أسرع)</option>
+      </select>
+    </label>
+    <span id="azureBox" hidden>
+      <label class="f">مفتاح Azure <input id="azKey" type="password" autocomplete="off" placeholder="Key 1" style="width:150px"></label>
+      <label class="f">المنطقة <input id="azRegion" type="text" autocomplete="off" placeholder="uaenorth" style="width:100px"></label>
+    </span>
     <div class="heard" id="heard"></div>
   </div>
 
@@ -249,6 +259,9 @@ V                      تشغيل وإيقاف تتبّع الصوت
 G                      وضع النظارة
 بالصوت: قل «سورة الكهف» لفتح أي سورة، أو ابدأ القراءة وتلقى الصفحة موضعك
 الصوت على الجوال: Chrome على أندرويد يعمل (يحتاج إنترنت). على الآيفون افتح الرابط في Safari مباشرة، لا من أيقونة الشاشة الرئيسية.
+محرك Azure السحابي: جلسة استماع واحدة متصلة بلا طنين ولا إعادة تشغيل، ونتائج جزئية أسرع، ويعمل في أي متصفح حتى Samsung Internet.
+  الإعداد مرة واحدة (مجاني حتى ٥ ساعات شهريًا): portal.azure.com ← Create a resource ← Speech ← المنطقة UAE North ← Pricing tier Free F0
+  ← بعد الإنشاء: Keys and Endpoint ← انسخ KEY 1 والصقه في «مفتاح Azure»، والمنطقة uaenorth. المفتاح يُحفظ في هذا المتصفح فقط.
 الإعدادات محفوظة في كل متصفح على حدة، فكل جهاز له خطه وارتفاعه ومعايرته.
 
 حساس النظارة: زر «ربط حساس النظارة» يطلب الإذن عبر WebHID (Chrome على الكمبيوتر، والصفحة على https).
@@ -646,7 +659,8 @@ const store = {
   set(v) { try { localStorage.setItem("qg", JSON.stringify(v)); } catch {} }
 };
 const S = Object.assign({ s: 1, a: 1, per: 3, size: 34, offset: 8, glow: 100, color: "#f3f1e7", base: -15,
-  auto: true, advance: false, follow: true, axis: "gaze", inv: false, nod: null, lead: 80 }, store.get());
+  auto: true, advance: false, follow: true, axis: "gaze", inv: false, nod: null, lead: 80,
+  engine: "browser", azKey: "", azRegion: "uaenorth" }, store.get());
 if (S.axis === "learned" && !S.nod) S.axis = "gaze";
 const save = () => store.set(S);
 
@@ -737,6 +751,7 @@ setInterval(predictAhead, 120);
 function setPos(i) {
   notePace(i);
   curIdx = i; cursor = i + 1; miss = 0;
+  if (az) azureBias();
   const p = Engine.pos(i);
   if (p.s !== S.s) {
     S.s = p.s; S.a = p.a; render();
@@ -790,6 +805,7 @@ function noSpeechHint() {
   return "المتصفح ما يدعم التعرف على الصوت. استخدم Chrome";
 }
 function startMic() {
+  if (S.engine === "azure") return startAzure();
   if (!SR) { micStatus(noSpeechHint(), "hide"); return; }
   rec = new SR();
   rec.lang = "ar-SA"; rec.continuous = true; rec.interimResults = true; rec.maxAlternatives = 3;
@@ -833,7 +849,74 @@ function startMic() {
 }
 function stopMic() {
   listening = false; try { rec && rec.stop(); } catch {}
+  stopAzure();
   curIdx = -1; highlight(); micStatus("الصوت متوقف");
+}
+
+/* ---------- cloud engine: Azure Speech, streaming from the browser ----------
+   One continuous session (no Android restart beeps), partial results every few hundred ms,
+   n-best on finals, and a phrase list biased to the ayahs around the cursor. The key is stored
+   only in this browser's localStorage and goes only to Azure. */
+let az = null, azPhrases = null, azPhraseKey = "";
+function loadScript(src) {
+  return new Promise((ok, bad) => { const s = document.createElement("script"); s.src = src; s.onload = ok; s.onerror = () => bad(new Error("load " + src)); document.head.appendChild(s); });
+}
+function azureBias() {
+  // words of the current and next three ayahs, plus each ayah as a phrase
+  if (!azPhrases) return;
+  const k = `${S.s}:${S.a}`; if (k === azPhraseKey) return; azPhraseKey = k;
+  try {
+    azPhrases.clear();
+    const vs = Q[S.s - 1][1], words = new Set();
+    for (let a = S.a; a <= Math.min(vs.length, S.a + 3); a++) {
+      const plain = Engine.norm(vs[a - 1]);
+      azPhrases.addPhrase(plain);
+      plain.split(" ").forEach(w => w.length > 1 && words.add(w));
+    }
+    words.forEach(w => azPhrases.addPhrase(w));
+  } catch {}
+}
+async function startAzure() {
+  if (!S.azKey) { micStatus("أدخل مفتاح Azure والمنطقة أولًا (التفاصيل في لوحة المساعدة بالأسفل)", "hide"); return; }
+  listening = true; resync(); micStatus("جاري الاتصال بـ Azure…");
+  try {
+    if (!window.SpeechSDK) await loadScript("azure-speech.js");
+    const K = window.SpeechSDK;
+    const cfg = K.SpeechConfig.fromSubscription(S.azKey, S.azRegion || "uaenorth");
+    cfg.speechRecognitionLanguage = "ar-SA";
+    cfg.outputFormat = K.OutputFormat.Detailed;
+    cfg.setProperty(K.PropertyId.Speech_SegmentationSilenceTimeoutMs, "400");      // finals soon after a pause
+    cfg.setProperty(K.PropertyId.SpeechServiceConnection_EndSilenceTimeoutMs, "600");
+    az = new K.SpeechRecognizer(cfg, K.AudioConfig.fromDefaultMicrophoneInput());
+    try { azPhrases = K.PhraseListGrammar.fromRecognizer(az); azPhraseKey = ""; azureBias(); } catch { azPhrases = null; }
+    az.recognizing = (_, e) => { if (listening && e.result.text) onHeard(finalBuf + " " + e.result.text, false, e.result.text); };
+    az.recognized = (_, e) => {
+      if (!listening || e.result.reason !== K.ResultReason.RecognizedSpeech || !e.result.text) return;
+      let tx = e.result.text, alts = [];
+      try { alts = (JSON.parse(e.result.json).NBest || []).map(n => n.Lexical || n.Display).filter(Boolean); } catch {}
+      if (alts.length > 1) tx = alts[Engine.bestAlternative(alts.map(x => finalBuf + " " + x), cursor, S.s)] || tx;
+      finalBuf = (finalBuf + " " + tx).trim().split(/\s+/).slice(-16).join(" ");
+      onHeard(finalBuf, true, tx);
+      azureBias();
+    };
+    az.canceled = (_, e) => {
+      if (e.reason === K.CancellationReason.Error) {
+        listening = false;
+        const d = e.errorDetails || "";
+        micStatus(/401|403|Authentication|key/i.test(d) ? "Azure رفض المفتاح أو المنطقة. تحقق منهما" : /microphone|audio|NotAllowed|permission/i.test(d) ? "المايك مرفوض. اسمح للميكروفون ثم أعد المحاولة" : "خطأ Azure: " + d.slice(0, 120), "hide");
+        stopAzure();
+      }
+    };
+    az.sessionStarted = () => micStatus("يستمع… (Azure)", "show");
+    az.sessionStopped = () => { if (listening) micStatus("انقطع الاتصال بـ Azure. اضغط التشغيل مرة ثانية", "hide"); listening = false; };
+    az.startContinuousRecognitionAsync(() => {}, err => { listening = false; micStatus("ما قدرت أبدأ Azure: " + String(err).slice(0, 120), "hide"); stopAzure(); });
+  } catch (e) {
+    listening = false; micStatus("تعذّر تحميل محرك Azure. تحقق من الإنترنت", "hide"); stopAzure();
+  }
+}
+function stopAzure() {
+  const r = az; az = null; azPhrases = null;
+  if (r) { try { r.stopContinuousRecognitionAsync(() => { try { r.close(); } catch {} }, () => { try { r.close(); } catch {} }); } catch {} }
 }
 const toggleMic = () => { listening ? stopMic() : startMic(); toast(listening ? "تتبّع الصوت شغّال" : "تتبّع الصوت متوقف"); };
 
@@ -920,6 +1003,7 @@ function applyLook() {
   $("auto").checked = S.auto; $("advance").checked = S.advance; $("follow").checked = S.follow;
   $("axis").value = S.axis; $("inv").checked = S.inv;
   $("lead").value = S.lead; $("leadv").textContent = AR(S.lead) + "٪";
+  $("engine").value = S.engine; $("azKey").value = S.azKey; $("azRegion").value = S.azRegion; $("azureBox").hidden = S.engine !== "azure";
   save(); fitText();
 }
 const LOOK_DEFAULTS = { per: 3, size: 34, offset: 8, glow: 100, color: "#f3f1e7" };
@@ -1033,6 +1117,9 @@ $("size").oninput = e => { S.size = +e.target.value; applyLook(); };
 $("offset").oninput = e => { S.offset = +e.target.value; applyLook(); };
 $("glow").oninput = e => { S.glow = +e.target.value; applyLook(); };
 $("lead").oninput = e => { S.lead = +e.target.value; applyLook(); };
+$("engine").onchange = e => { const was = listening; if (was) stopMic(); S.engine = e.target.value; applyLook(); if (was) startMic(); };
+$("azKey").onchange = e => { S.azKey = e.target.value.trim(); save(); };
+$("azRegion").onchange = e => { S.azRegion = e.target.value.trim().toLowerCase() || "uaenorth"; applyLook(); };
 $("resetLook").onclick = () => { Object.assign(S, LOOK_DEFAULTS); applyLook(); render(); toast("رجعت إعدادات العرض إلى الافتراضي"); };
 document.querySelectorAll(".sw").forEach(b => b.onclick = () => { S.color = b.dataset.c; applyLook(); });
 $("auto").onchange = e => { S.auto = e.target.checked; save(); };

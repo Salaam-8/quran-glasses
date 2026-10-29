@@ -74,6 +74,29 @@ const t = (name, got, want) => {
     t("sensor head-down hides text in glasses mode", await p.evaluate(() => { document.body.classList.add("focus-mode"); applyHide(); const r = document.getElementById("text").classList.contains("off"); document.body.classList.remove("focus-mode"); applyHide(); return r; }), true);
     for (let k = 0; k < 6; k++) { await p.evaluate(() => QuranGlasses.pushPose({ pitch: 0 })); await p.waitForTimeout(100); }
     t("sensor head-up shows text again", await p.textContent("#state"), "قيام · النص ظاهر");
+    // cloud engine: wire-up check with a mocked Azure SDK (partials, n-best finals, phrase bias)
+    const azr = await p.evaluate(async () => {
+      const calls = { phrases: 0, started: false };
+      window.SpeechSDK = {
+        OutputFormat: { Detailed: 1 }, ResultReason: { RecognizedSpeech: 3 }, CancellationReason: { Error: 1 },
+        PropertyId: { Speech_SegmentationSilenceTimeoutMs: "a", SpeechServiceConnection_EndSilenceTimeoutMs: "b" },
+        SpeechConfig: { fromSubscription: (k, r) => ({ k, r, setProperty() {} }) },
+        AudioConfig: { fromDefaultMicrophoneInput: () => ({}) },
+        PhraseListGrammar: { fromRecognizer: () => ({ clear() {}, addPhrase() { calls.phrases++; } }) },
+        SpeechRecognizer: class { constructor(c) { this.c = c; window.__az = this; } startContinuousRecognitionAsync(ok) { calls.started = true; this.sessionStarted?.(); ok(); } stopContinuousRecognitionAsync(ok) { ok(); } close() {} }
+      };
+      S.engine = "azure"; S.azKey = "test-key"; S.azRegion = "uaenorth"; applyLook();
+      QuranGlasses.goto(1, 1); startMic(); await new Promise(r => setTimeout(r, 50));
+      const r = window.__az;
+      r.recognizing(null, { result: { text: "الحمد لله" } });
+      const partial = document.querySelector(".ay.cur")?.dataset.a;
+      r.recognized(null, { result: { reason: 3, text: "الرحمن الرجيم", json: JSON.stringify({ NBest: [{ Lexical: "الرحمن الرجيم" }, { Lexical: "الرحمن الرحيم مالك يوم الدين" }] }) } });
+      const final = document.querySelector(".ay.cur")?.dataset.a;
+      const state = document.getElementById("micState").textContent;
+      stopMic(); S.engine = "browser"; applyLook(); delete window.SpeechSDK;
+      return { region: r.c.r, lang: r.c.speechRecognitionLanguage, started: calls.started, phrases: calls.phrases > 10, partial, final, state };
+    });
+    t("azure engine wiring", azr, { region: "uaenorth", lang: "ar-SA", started: true, phrases: true, partial: "2", final: "4", state: "يستمع… (Azure)" });
     t("no page errors", errs.length, 0);
     await p.close();
   }
