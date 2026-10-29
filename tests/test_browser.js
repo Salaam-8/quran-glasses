@@ -46,8 +46,13 @@ const t = (name, got, want) => {
     await p.keyboard.press("Enter");
     t("picker opens surah", await head(), "سورة يس · الآيات ١–٣ من ٨٣");
     t("picker closed", await p.isVisible("#picker"), false);
+    await p.keyboard.press("KeyS"); await p.fill(".picker .q", "كهف");
+    t("picker search by name", await p.evaluate(() => [...document.querySelectorAll(".picker button[data-n]")].map(b => +b.dataset.n)), [18]);
+    await p.fill(".picker .q", "11"); 
+    t("picker search by number prefix", await p.evaluate(() => [...document.querySelectorAll(".picker button[data-n]")].map(b => +b.dataset.n)), [11, 110, 111, 112, 113, 114]);
+    await p.press(".picker .q", "Enter"); t("picker search opens first match", await head(), "سورة هود · الآيات ١–٣ من ١٢٣");
     await p.keyboard.press("PageDown");
-    t("PageDown next page", await head(), "سورة يس · الآيات ٤–٦ من ٨٣");
+    t("PageDown next page", await head(), "سورة هود · الآيات ٤–٦ من ١٢٣");
     // glasses IMU: feed a synthetic Gen2 pose frame (head down 40°) straight into the WebHID handler
     const imuPitch = await p.evaluate(() => {
       const imu = QuranGlasses.imu; imu.gen = 2;
@@ -88,8 +93,9 @@ const t = (name, got, want) => {
     await tap(W * 0.5, 250); t("center tap shows buttons", await p.isVisible("#corner"), true);
     await ptr("pointerdown", W * 0.5, 250); await p.waitForTimeout(700); await ptr("pointerup", W * 0.5, 250);
     t("long press opens picker", await p.isVisible("#picker"), true);
-    await swipe(400, 300, 400, 150); await swipe(400, 300, 400, 150);
-    await p.click(".picker .sel"); t("swipe + tap picks surah", await head(), "سورة آل عمران · الآيات ١–٣ من ٢٠٠");
+    t("picker lists all surahs", await p.evaluate(() => document.querySelectorAll('.picker button[data-n]').length), 114);
+    t("picker list scrolls by touch", await p.evaluate(() => getComputedStyle(document.querySelector(".picker .list")).touchAction), "pan-y");
+    await p.click('.picker button[data-n="3"]'); t("tap in list picks surah", await head(), "سورة آل عمران · الآيات ١–٣ من ٢٠٠");
     await ctx.close();
   }
 
