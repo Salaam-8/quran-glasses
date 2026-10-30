@@ -136,6 +136,7 @@ Outputs:
 - Phase 1: native Android app (Kotlin; matcher in C++ via NDK; R8 obfuscation) for existing glasses.
 - Phase 2: glasses + activation code bundle.
 - Phase 3: own-brand glasses via a white-label manufacturer, preferably with waveguide optics.
+  - 2026-10-30: `docs/RFQ-quran-glasses.md` (English RFQ for manufacturers, two tracks: white-label birdbath now, custom waveguide later, with an Arabic summary and an email template) and `docs/manufacturers.md` (Arabic shortlist: SmartXY, ENMESI/Anpo, VISGLASS, Meta-Bounds, NED+, Lingxi AR, Goertek, Cellid; contacts from their websites, unverified by phone).
 - Closed source: a signed license (e.g. Ed25519) bound to the glasses' serial number, if the SDK exposes one; verified offline.
 - Before selling:
   - Confirm the Quran-text licensing.
