@@ -16,11 +16,11 @@ src/viture.js         VITURE glasses IMU over WebHID, no vendor SDK (Gen2 = Pro 
 data/quran.json       Uthmani text, 114 surahs / 6236 ayahs (npm quran-json@3.1.2, CC-BY-4.0, text from QuranEnc)
 assets/               Amiri Quran woff2 (SIL OFL), app icons, vendored Azure Speech SDK (MIT)
 build.py              builds dist/ (standard library only)
-tests/test_engine.js  34 matcher tests against the real text (node, no deps)
+tests/test_engine.js  56 matcher tests against the real text (node, no deps)
 tests/test_viture.js  38 IMU driver tests: byte-exact frames, quaternion → head angle (node, no deps)
 tests/test_server.py  21 checks of the self-hosted ASR server's streaming policy and protocol (python, numpy + websockets)
 server/               self-hosted Quran ASR server (faster-whisper + websockets), Docker + Caddy, Oracle setup guide
-tests/test_browser.js 33 end-to-end tests, desktop + emulated phone (needs playwright)
+tests/test_browser.js 53 end-to-end tests, desktop + emulated phone (needs playwright)
 dist/                 build output (committed so GitHub Pages can serve dist/app)
 ```
 
@@ -38,13 +38,14 @@ Outputs:
 | Feature | How | Verified |
 |---|---|---|
 | Full text, Uthmani, offline | data + font embedded | 114/6236 asserted in build; render checked visually |
-| Display options | font size, vertical position, brightness, color, ayahs per page; «استعادة الافتراضي» resets them. The font auto-shrinks (`--fit`) so the page never overflows the top of the stage, whatever the sliders say | manual + headless worst-case check |
+| Display options | font size, vertical position, brightness, color, ayahs per page, **top limit**; «استعادة الافتراضي» resets them | manual + browser tests |
+| Top limit (2026-10-30) | the top of the VITURE field of view is dark, so «الحد العلوي» (default 55 % of the stage from the bottom) caps the text. Pages start at (ayah, word) = `(S.a, S.w)`; after rendering, the first token whose line crosses the limit starts the next page (`PE`), so long ayahs continue over pages with «…» and the ayah mark only at their true end. `page(1)` continues at `PE`; `page(-1)` binary-searches the earliest start whose page still reaches the current one (`pageBefore`); the tracker pages to wherever the recited word is (`pageContaining`). A red guide line shows the limit while the source is the simulation slider | browser tests (Ayat al-Kursi at 60 px) |
 | Glasses mode | `G` key / button: hides UI, fullscreen, wake lock; phones lock landscape | browser test |
 | Voice tracking | Web Speech API (`ar-SA`, continuous, interim) or Azure Speech streaming (user's own key) → `Engine.locate()` | engine tests use typed text; Azure path mocked in browser test |
 | Ayah/word highlight | current ayah full brightness, others dimmed; current word green + underlined | browser test |
 | Auto page turn | when the recited ayah is the last one on the page, the page rebases to it | browser test |
-| Find position anywhere | recite from anywhere and the engine locates you, even across surahs | engine + browser tests |
-| Voice command | «سورة الكهف» opens a surah (fuzzy name match; An-Nur 24:1 is not misread as a command) | tests |
+| Find position anywhere | recite from anywhere and the engine locates you. **Search scope** setting (2026-10-30): current surah (default, never leaves the surah except by «سورة …» or the picker), current + next, whole Quran. The whole-Quran best still vetoes in-scope echoes of common words. **Far-jump gate**: more than 10 ayahs away (or another surah) needs the same place in two consecutive finals (`Engine.jumpGate`); interim results never jump far. Jumps bigger than a page push the last 5 positions (`S.hist`) and show a 5 s toast with «رجوع» | engine + browser tests |
+| Voice command | «سورة الكهف» opens a surah (fuzzy name match; An-Nur 24:1 is not misread as a command). **Control words** (2026-10-30): «توقف/وقف» freezes tracking and saves (surah, ayah, word) in `S.saved`; «استمر/كمّل» returns there and continues, even after the page moved or reloaded; «ارجع» undoes the last jump (`S.hist`). Recognised only as the first word of a ≤ 4-word utterance and only when the phrase is not the next words of the text (so 12:50 «ارجع إلى ربك» is recitation). Keyboard: `P` pause/resume, `Backspace` back | tests |
 | Surah picker in glasses | `S` / `.` / `B` opens it; full list of 114 scrolls by touch or wheel-free keyboard; search box filters by name or number; arrows / PageUp / PageDown move; digits jump; Enter opens | browser test |
 | Manual paging any time | ← / Space / PageDown = next, → / PageUp = prev; voice resumes from the new page | browser test |
 | Phone touch | tap left 30% = next, right 30% = prev, swipe right = next, swipe left = prev, long-press = surah list, center tap = on-screen buttons (exit / surahs / mic) | emulated Pixel 7 |
@@ -64,7 +65,7 @@ Outputs:
 
 ## Not done / open items (priority order)
 
-1. ~~Host the PWA on GitHub Pages.~~ **Done (2026-10-29).** Private repo `Salaam-8/quran-glasses`, published by `.github/workflows/pages.yml` (Pages source = GitHub Actions) on every push to `main`. Live: https://salaam-8.github.io/quran-glasses/ ; manifest and sw.js verified 200 in Chrome. Bump `CACHE` in `build.py` on every deploy (now v18).
+1. ~~Host the PWA on GitHub Pages.~~ **Done (2026-10-29).** Private repo `Salaam-8/quran-glasses`, published by `.github/workflows/pages.yml` (Pages source = GitHub Actions) on every push to `main`. Live: https://salaam-8.github.io/quran-glasses/ ; manifest and sw.js verified 200 in Chrome. Bump `CACHE` in `build.py` on every deploy (now v19).
 2. **Glasses IMU: implemented, needs a real-device check.** `src/viture.js` talks to the glasses over WebHID
    without the vendor SDK (its browser build has no public download). Protocol sources:
    - Gen2 / Pro 2 (`35CA:1301`): https://github.com/elasticjava/viture-v2/blob/main/PROTOCOL.md — one HID interface,
@@ -129,7 +130,7 @@ Outputs:
    if still not good enough: on-device `tarteel-ai/whisper-base-ar-quran` (Apache-2.0, WER ≈ 5.75%) in a native app,
    or lowering `sim` thresholds after collecting real transcripts (log `#heard` text during a real session).
 5. Android Chrome may play a sound each time recognition restarts. iOS Safari speech support is limited. Check both on real devices.
-6. Threshold tuning: posture bands (show within −20°, hide below −35° of the calibrated qiyam angle) and the matcher scores need real-world data.
+6. Threshold tuning: the top limit default (55 %) and the far-jump gate (10 ayahs) came from the owner's first real test; posture bands (show within −20°, hide below −35° of the calibrated qiyam angle) and the matcher scores need real-world data.
 
 ## Product direction (discussed, not started)
 - Phase 1: native Android app (Kotlin; matcher in C++ via NDK; R8 obfuscation) for existing glasses.

@@ -145,6 +145,24 @@ const t = (name, got, want) => {
     t("top limit: guide line shows in simulation", await p.evaluate(() => { onPitch(-15, "محاكاة"); return getComputedStyle(document.getElementById("toplimit")).display; }), "block");
     t("top limit: guide hidden with the sensor", await p.evaluate(() => { QuranGlasses.pushPose({ pitch: -15 }); return getComputedStyle(document.getElementById("toplimit")).display; }), "none");
     await p.evaluate(() => { Object.assign(S, LOOK_DEFAULTS); S.top = 90; applyLook(); QuranGlasses.goto(1, 1); });
+    // voice control: توقف freezes and saves, استمر returns and continues, ارجع undoes a jump; P / Backspace do the same
+    await p.evaluate(() => { S.scope = "surah"; applyLook(); QuranGlasses.goto(1, 1); QuranGlasses.hear("الحمد لله رب العالمين"); });
+    await p.evaluate(() => QuranGlasses.hear("توقف"));
+    t("توقف freezes tracking", await p.evaluate(() => [paused, document.getElementById("micState").textContent.includes("متوقف"), JSON.parse(localStorage.getItem("qg")).saved.a]), [true, true, 1]);
+    await p.evaluate(() => QuranGlasses.hear("الرحمن الرحيم مالك يوم الدين"));
+    t("recitation ignored while paused", await head(), "سورة الفاتحة · الآيات ١–٣ من ٧");
+    await p.evaluate(() => { QuranGlasses.goto(36, 1); QuranGlasses.hear("استمر"); });
+    t("استمر returns to the saved place", await p.evaluate(() => [paused, S.s, document.querySelector(".w.now")?.dataset.i === String(S.saved.i)]), [false, 1, true]);
+    await p.evaluate(() => QuranGlasses.hear("الرحمن الرحيم مالك يوم الدين"));
+    t("tracking continues after resume", await head(), "سورة الفاتحة · الآيات ٤–٦ من ٧");
+    await p.keyboard.press("KeyP"); t("P pauses", await p.evaluate(() => paused), true);
+    await p.keyboard.press("KeyP"); t("P resumes", await p.evaluate(() => paused), false);
+    await p.evaluate(() => { QuranGlasses.hear("سورة الكهف"); QuranGlasses.hear("ارجع"); });
+    t("ارجع undoes the surah jump", await p.evaluate(() => S.s), 1);
+    await p.evaluate(() => QuranGlasses.hear("سورة الكهف")); await p.keyboard.press("Backspace");
+    t("Backspace undoes the surah jump", await p.evaluate(() => S.s), 1);
+    t("ارجع as recitation is not a command", await p.evaluate(() => { QuranGlasses.goto(12, 50); const c = cursor; QuranGlasses.hear("ارجع إلى ربك"); return S.s === 12 && cursor > c; }), true);
+    await p.evaluate(() => { QuranGlasses.goto(1, 1); });
     t("no page errors", errs.length, 0);
     await p.close();
   }

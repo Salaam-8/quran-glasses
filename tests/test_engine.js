@@ -74,5 +74,16 @@ t('scope all: Mulk from Kahf found', show(E.locate('تبارك الذي بيده
   t('gate: far() reports distance', JSON.stringify([g.far(near, cur), g.far(far, cur), g.far(other, cur)]), '[false,true,true]');
 }
 
+// control words
+t('cmd توقف', E.controlCommand('توقف'), 'pause');
+t('cmd وقف', E.controlCommand('وقّف'), 'pause');
+t('cmd استمر', E.controlCommand('استمر'), 'resume');
+t('cmd كمّل', E.controlCommand('كمّل'), 'resume');
+t('cmd ارجع', E.controlCommand('ارجع'), 'back');
+t('cmd at the start of a short phrase', E.controlCommand('استمر يا شيخ'), 'resume');
+t('cmd not at the start ignored', E.controlCommand('الحمد لله توقف'), null);
+t('cmd long phrase ignored', E.controlCommand('ارجع إلى ربك فاسأله ما بال النسوة'), null);
+t('cmd unrelated word', E.controlCommand('الرحمن'), null);
+
 console.log(pass, 'pass', fail, 'fail');
 if (fail) process.exit(1);

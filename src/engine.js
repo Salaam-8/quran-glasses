@@ -154,6 +154,18 @@ const Engine = (function () {
     return bi;
   }
 
+  /* Control words: «توقف/وقف» pause, «استمر/كمل» resume, «ارجع» back. Recognised only as the first
+     word of a short utterance (≤ 4 words), fuzzily, so they are not confused with recitation. */
+  const CONTROL = { pause: ["توقف", "وقف"], resume: ["استمر", "كمل"], back: ["ارجع"] };
+  function controlCommand(text) {
+    const t = norm(text).split(" ").filter(Boolean);
+    if (!t.length || t.length > 4) return null;
+    let best = 0, bk = null;
+    for (const [k, forms] of Object.entries(CONTROL))
+      for (const f of forms) { const v = sim(t[0], f); if (v > best) { best = v; bk = k; } }
+    return best >= 0.8 ? bk : null;
+  }
+
   /* Voice command "سورة <name>" → surah number, or null. */
   function surahCommand(text) {
     const t = norm(text).split(" ");
@@ -175,7 +187,7 @@ const Engine = (function () {
   }
 
   return {
-    build, locate, bestAlternative, surahCommand, jumpGate, norm,
+    build, locate, bestAlternative, surahCommand, controlCommand, jumpGate, norm,
     pos: i => ({ s: SUR[i], a: AYA[i] }),
     first: (s, a) => { const r = TOK[s][a - 1].find(x => x >= 0); return r === undefined ? SSTART[s] : r; },
     tokens: (s, a) => TOK[s][a - 1],

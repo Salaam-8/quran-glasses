@@ -275,8 +275,11 @@ body.sim-src .toplimit { display: block; }
 →  PageUp              الصفحة السابقة
 S  .  B                فتح قائمة السور (داخل القائمة: الأسهم أو PageUp/PageDown للتنقل، Enter أو . للاختيار، أو اكتب رقم السورة)
 V                      تشغيل وإيقاف تتبّع الصوت
+P                      توقف / استمر (يجمّد التتبع ويحفظ الموضع)
+Backspace              ارجع إلى ما قبل آخر قفزة
 G                      وضع النظارة
 بالصوت: قل «سورة الكهف» لفتح أي سورة، أو ابدأ القراءة وتلقى الصفحة موضعك
+أوامر صوتية: «توقف» يجمّد التتبع ويحفظ موضعك · «استمر» أو «كمّل» يرجع للموضع المحفوظ ويكمل · «ارجع» يرجع لما قبل آخر قفزة
 الصوت على الجوال: Chrome على أندرويد يعمل (يحتاج إنترنت). على الآيفون افتح الرابط في Safari مباشرة، لا من أيقونة الشاشة الرئيسية.
 السيرفر القرآني: سيرفرك الخاص بنموذج تعرّف مدرّب على التلاوة (مجاني، بلا طنين، بلا حدود ساعات). خطوات تشغيله على Oracle Cloud المجاني في ملف server/README.md في المشروع.
   ثم اختر «سيرفر قرآني» وضع رابطه (https://اسمك.duckdns.org) والرمز السري الذي اخترته في ملف .env على السيرفر.
@@ -467,6 +470,18 @@ const Engine = (function () {
     return bi;
   }
 
+  /* Control words: «توقف/وقف» pause, «استمر/كمل» resume, «ارجع» back. Recognised only as the first
+     word of a short utterance (≤ 4 words), fuzzily, so they are not confused with recitation. */
+  const CONTROL = { pause: ["توقف", "وقف"], resume: ["استمر", "كمل"], back: ["ارجع"] };
+  function controlCommand(text) {
+    const t = norm(text).split(" ").filter(Boolean);
+    if (!t.length || t.length > 4) return null;
+    let best = 0, bk = null;
+    for (const [k, forms] of Object.entries(CONTROL))
+      for (const f of forms) { const v = sim(t[0], f); if (v > best) { best = v; bk = k; } }
+    return best >= 0.8 ? bk : null;
+  }
+
   /* Voice command "سورة <name>" → surah number, or null. */
   function surahCommand(text) {
     const t = norm(text).split(" ");
@@ -488,7 +503,7 @@ const Engine = (function () {
   }
 
   return {
-    build, locate, bestAlternative, surahCommand, jumpGate, norm,
+    build, locate, bestAlternative, surahCommand, controlCommand, jumpGate, norm,
     pos: i => ({ s: SUR[i], a: AYA[i] }),
     first: (s, a) => { const r = TOK[s][a - 1].find(x => x >= 0); return r === undefined ? SSTART[s] : r; },
     tokens: (s, a) => TOK[s][a - 1],
@@ -708,7 +723,7 @@ const store = {
 };
 const S = Object.assign({ s: 1, a: 1, w: 0, per: 3, size: 34, offset: 8, top: 55, glow: 100, color: "#f3f1e7", base: -15,
   auto: true, advance: false, follow: true, axis: "gaze", inv: false, nod: null, lead: 80,
-  engine: "browser", azKey: "", azRegion: "uaenorth", srvUrl: "", srvToken: "", scope: "surah" }, store.get());
+  engine: "browser", azKey: "", azRegion: "uaenorth", srvUrl: "", srvToken: "", scope: "surah", saved: null, hist: [] }, store.get());
 if (S.axis === "learned" && !S.nod) S.axis = "gaze";
 const save = () => store.set(S);
 
@@ -841,6 +856,32 @@ function goBack() {
 }
 const bigJump = (i, cur) => cur < 0 ? false : Engine.pos(i).s !== S.s || Math.abs(Engine.pos(i).a - Engine.pos(cur).a) > S.per;
 
+/* Pause / resume: «توقف» freezes tracking and saves the exact place (surah, ayah, word) in
+   localStorage; «استمر» returns there and continues, even after the page was moved or reloaded. */
+let paused = false;
+function pauseTracking() {
+  paused = true;
+  S.saved = { s: S.s, a: S.a, w: S.w, i: curIdx >= 0 ? curIdx : cursor }; save();
+  micStatus(listening ? "متوقف مؤقتًا · قل «استمر» أو اضغط P" : "متوقف مؤقتًا", "hide");
+  toast("تم التوقف. الموضع محفوظ");
+}
+function resumeTracking() {
+  paused = false;
+  const h = S.saved;
+  if (h && Engine.pos(h.i).s === h.s) {
+    S.s = h.s; S.a = h.a; S.w = h.w; render(); cursor = h.i; curIdx = h.i; miss = 0; gate.reset(); highlight();
+    if (!(curIdx >= pageStartFlat() && curIdx < pageEndFlat())) pageContaining(curIdx);
+    toast(`استمر من سورة ${Q[S.s - 1][0]} · آية ${AR(Engine.pos(h.i).a)}`);
+  } else toast("لا يوجد موضع محفوظ، أكمل من هنا");
+  micStatus(listening ? "يستمع…" : "الصوت متوقف", listening ? "show" : "");
+}
+const togglePause = () => paused ? resumeTracking() : pauseTracking();
+function control(cmd) {
+  if (cmd === "pause") pauseTracking();
+  else if (cmd === "resume") resumeTracking();
+  else if (cmd === "back") goBack();
+}
+
 /* Pace: words per second measured between real recogniser updates, used to nudge the highlight
    forward while waiting for the next update (the recogniser trails speech by a few hundred ms). */
 let pace = 1.6, lastReal = null;
@@ -853,7 +894,7 @@ function notePace(i) {
   lastReal = { idx: i, t: now };
 }
 function predictAhead() {
-  if (!listening || !lastReal || curIdx < 0 || pick !== null) return;
+  if (!listening || paused || !lastReal || curIdx < 0 || pick !== null) return;
   const dt = (performance.now() - lastReal.t) / 1000;
   if (dt > 2.5) return;                                             // silence: stop guessing
   const ahead = Math.min(S.lead > 100 ? 3 : 2, Math.floor(pace * dt * S.lead / 100));   // S.lead: % of the reciter's pace
@@ -901,7 +942,11 @@ function onHeard(text, isFinal, latest) {
   if (isFinal) {
     const cmd = Engine.surahCommand(latest);
     if (cmd) { gotoSurah(cmd); return; }
+    // a control word counts only when the phrase is not simply the next words of the text
+    const ctl = Engine.controlCommand(latest);
+    if (ctl && Engine.locate(latest, cursor, S.s, "local") == null) { control(ctl); return; }
   }
+  if (paused) return;                                   // frozen: the page stays, nothing moves
   let i = Engine.locate(text, cursor, S.s, "local");
   if (i == null && isFinal) {
     miss++;
@@ -976,7 +1021,7 @@ function startMic() {
     if (listening) setTimeout(() => { try { rec.start(); } catch {} }, 50);   // short gap: Android ends recognition after every pause
     else micStatus("الصوت متوقف");
   };
-  listening = true; resync(); micStatus("جاري التشغيل…");
+  listening = true; if (!paused) resync(); micStatus("جاري التشغيل…");
   try { rec.start(); } catch { listening = false; micStatus("ما قدرت أشغّل المايك", "hide"); }
 }
 function stopMic() {
@@ -1448,6 +1493,8 @@ document.addEventListener("keydown", e => {
   else if (["ArrowRight", "PageUp"].includes(c)) { e.preventDefault(); page(-1); }
   else if (["KeyS", "KeyB", "Period"].includes(c)) { e.preventDefault(); openPicker(); }
   else if (c === "KeyV") toggleMic();
+  else if (c === "KeyP") { e.preventDefault(); togglePause(); }
+  else if (c === "Backspace") { e.preventDefault(); goBack(); }
   else if (c === "KeyG") toggleFocus();
   else if (k === "Escape") document.body.classList.remove("focus-mode");
 });
