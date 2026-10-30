@@ -32,6 +32,7 @@ const t = (name, got, want) => {
     const p = await b.newPage({ viewport: { width: 1280, height: 800 } });
     const errs = []; p.on("pageerror", e => errs.push(e.message));
     await p.goto(url); await p.evaluate(() => localStorage.clear()); await p.reload(); await p.waitForTimeout(500);
+    await p.evaluate(() => { S.top = 90; applyLook(); render(); });     // tall limit: whole-ayah pages for the tests below
     const head = () => p.textContent(".head");
     t("starts at Fatiha", await head(), "سورة الفاتحة · الآيات ١–٣ من ٧");
     await p.evaluate(() => QuranGlasses.hear("الحمد لله رب العالمين"));
@@ -118,6 +119,25 @@ const t = (name, got, want) => {
     await p.evaluate(() => { stopMic(); S.engine = "browser"; applyLook(); }); await p.waitForTimeout(500);
     t("server engine sends stop", seen.stop, true);
     wss.close();
+    // top limit: the page never crosses the limit line; long content continues on the next page by rendered lines
+    const split = await p.evaluate(() => {
+      S.size = 60; S.top = 55; S.per = 3; applyLook(); QuranGlasses.goto(2, 255);   // Ayat al-Kursi: long ayah
+      const st = document.getElementById("stage").getBoundingClientRect(), tx = document.getElementById("text").getBoundingClientRect();
+      const limitY = st.bottom - st.height * S.top / 100;
+      const first = { a: S.a, w: S.w, pe: { ...PE }, head: document.querySelector(".head").textContent, under: tx.top >= limitY - 1, cont: !!document.querySelector(".cont") };
+      page(1); const second = { a: S.a, w: S.w, cont: !!document.querySelector(".cont"), head: document.querySelector(".head").textContent };
+      const tx2 = document.getElementById("text").getBoundingClientRect();
+      page(-1); const back = { a: S.a, w: S.w };
+      return { first, second, under2: tx2.top >= limitY - 1, back };
+    });
+    t("top limit: first page stays under the line", split.first.under, true);
+    t("top limit: first page is cut mid-ayah", split.first.pe.w > 0 && split.first.head.includes("…"), true);
+    t("top limit: next page continues at the cut", [split.second.a, split.second.w, split.second.cont], [split.first.pe.a, split.first.pe.w, true]);
+    t("top limit: second page under the line", split.under2, true);
+    t("top limit: previous page returns to the start", split.back, { a: 255, w: 0 });
+    t("top limit: guide line shows in simulation", await p.evaluate(() => { onPitch(-15, "محاكاة"); return getComputedStyle(document.getElementById("toplimit")).display; }), "block");
+    t("top limit: guide hidden with the sensor", await p.evaluate(() => { QuranGlasses.pushPose({ pitch: -15 }); return getComputedStyle(document.getElementById("toplimit")).display; }), "none");
+    await p.evaluate(() => { Object.assign(S, LOOK_DEFAULTS); S.top = 90; applyLook(); QuranGlasses.goto(1, 1); });
     t("no page errors", errs.length, 0);
     await p.close();
   }
@@ -127,6 +147,7 @@ const t = (name, got, want) => {
     const ctx = await b.newContext({ ...devices["Pixel 7 landscape"] });
     const p = await ctx.newPage();
     await p.goto(url); await p.evaluate(() => localStorage.clear()); await p.reload(); await p.waitForTimeout(500);
+    await p.evaluate(() => { S.top = 90; applyLook(); render(); });     // tall limit: whole-ayah pages for the tests below
     const head = () => p.textContent(".head");
     const ptr = (type, x, y) => p.evaluate(([type, x, y]) =>
       document.getElementById("stage").dispatchEvent(new PointerEvent(type, { pointerType: "touch", clientX: x, clientY: y, bubbles: true })), [type, x, y]);

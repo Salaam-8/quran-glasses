@@ -86,11 +86,16 @@ details.api pre {
   position: absolute; left: 0; right: 0; bottom: var(--offset, 8%);
   margin-inline: auto; width: min(92%, 62em);
   padding-inline: max(16px, env(safe-area-inset-left, 0px));
-  font-family: var(--f-quran); color: var(--verse); font-size: calc(var(--size, 34px) * var(--fit, 1));
+  font-family: var(--f-quran); color: var(--verse); font-size: var(--size, 34px);
   line-height: 2.1; text-align: justify; text-align-last: center; direction: rtl;
   opacity: var(--glow, 1); transition: opacity .25s ease;
 }
 .text.off { opacity: 0; }
+.text .cont { color: var(--muted); font-size: .7em; }
+/* top limit of the text area (the top of the glasses' field of view is dark); the guide shows in simulation */
+.toplimit { position: absolute; left: 0; right: 0; bottom: var(--top, 55%); border-top: 1px solid rgba(255, 60, 60, .55); pointer-events: none; display: none; }
+.toplimit::after { content: "الحد العلوي"; position: absolute; right: 8px; top: 2px; font: 11px var(--f-ui); color: rgba(255, 90, 90, .8); }
+body.sim-src .toplimit { display: block; }
 .head { text-align: center; font-size: .62em; color: var(--muted); font-family: var(--f-ui); letter-spacing: .02em; margin-bottom: .2em; line-height: 1.6; }
 .basmala { text-align: center; text-align-last: center; }
 .mark { color: var(--accent); font-size: .85em; white-space: nowrap; padding-inline: .15em; }
@@ -202,6 +207,7 @@ details.api pre {
     <label class="f">آيات بالصفحة <input id="per" type="number" min="1" max="15" value="3"></label>
     <label class="f">حجم الخط <input id="size" type="range" min="20" max="72" value="34"></label>
     <label class="f">الارتفاع <input id="offset" type="range" min="0" max="60" value="8"></label>
+    <label class="f" title="أعلى نقطة يصلها النص (نسبة من ارتفاع الشاشة من الأسفل). ما زاد عنها ينتقل إلى الصفحة التالية">الحد العلوي <input id="top" type="range" min="25" max="95" value="55"> <span class="num" id="topv">٥٥٪</span></label>
     <label class="f">السطوع <input id="glow" type="range" min="20" max="100" value="100"></label>
     <button class="btn" id="resetLook" title="يعيد الخط والارتفاع والسطوع واللون وعدد الآيات إلى الافتراضي">استعادة الافتراضي</button>
     <div class="swatches" role="group" aria-label="لون النص">
@@ -275,6 +281,7 @@ window.QuranGlasses.pushPose({ pitch: -18.4 });
     <button id="cMic">الصوت</button>
   </nav>
   <div class="toast" id="toast"></div>
+  <div class="toplimit" id="toplimit" aria-hidden="true"></div>
   <article class="text" id="text" aria-live="polite"></article>
   <div class="picker" id="picker" hidden></div>
 </main>
@@ -436,7 +443,8 @@ const Engine = (function () {
     pos: i => ({ s: SUR[i], a: AYA[i] }),
     first: (s, a) => { const r = TOK[s][a - 1].find(x => x >= 0); return r === undefined ? SSTART[s] : r; },
     tokens: (s, a) => TOK[s][a - 1],
-    start: s => SSTART[s]
+    start: s => SSTART[s],
+    end: s => SEND[s]
   };
 })();
 
@@ -649,7 +657,7 @@ const store = {
   get() { try { return JSON.parse(localStorage.getItem("qg") || "{}"); } catch { return {}; } },
   set(v) { try { localStorage.setItem("qg", JSON.stringify(v)); } catch {} }
 };
-const S = Object.assign({ s: 1, a: 1, per: 3, size: 34, offset: 8, glow: 100, color: "#f3f1e7", base: -15,
+const S = Object.assign({ s: 1, a: 1, w: 0, per: 3, size: 34, offset: 8, top: 55, glow: 100, color: "#f3f1e7", base: -15,
   auto: true, advance: false, follow: true, axis: "gaze", inv: false, nod: null, lead: 80,
   engine: "browser", azKey: "", azRegion: "uaenorth", srvUrl: "", srvToken: "" }, store.get());
 if (S.axis === "learned" && !S.nod) S.axis = "gaze";
@@ -664,40 +672,88 @@ function toast(msg) {
 /* ---------- reader ---------- */
 const surahSel = $("surah");
 Q.forEach((s, i) => surahSel.add(new Option(`${AR(i + 1)}. ${s[0]}`, i + 1)));
-const pageEnd = () => Math.min(Q[S.s - 1][1].length, S.a + S.per - 1);
+/* ---------- page model ----------
+   A page starts at (S.a, S.w): ayah and token index inside it. It holds at most S.per ayahs, and
+   never grows above the top limit (S.top % of the stage, measured from the bottom): after rendering,
+   the first token whose line crosses the limit cuts the page, so a long ayah continues on the next
+   page. PE = where the next page starts (exclusive end), PE.w === 0 means whole ayahs only. */
+let PE = { a: 2, w: 0 };
+const pageEnd = () => (PE.w === 0 ? PE.a - 1 : PE.a);          // last ayah shown (maybe partial)
+const flatOf = (s, a, w) => {                                   // flat word index of (a, token w)
+  const total = Q[s - 1][1].length;
+  if (a > total) return Engine.end(s);
+  const idx = Engine.tokens(s, a);
+  for (let k = w; k < idx.length; k++) if (idx[k] >= 0) return idx[k];
+  return a < total ? Engine.first(s, a + 1) : Engine.end(s);
+};
+const pageStartFlat = () => flatOf(S.s, S.a, S.w);
+const pageEndFlat = () => flatOf(S.s, PE.a, PE.w);
+function tokenOf(s, i) {                                        // (a, w) of flat word i
+  const p = Engine.pos(i), idx = Engine.tokens(s, p.a);
+  return { a: p.a, w: Math.max(0, idx.indexOf(i)) };
+}
 
 function render() {
   const total = Q[S.s - 1][1].length;
   S.a = Math.min(Math.max(1, S.a), total);
   const [name, verses] = Q[S.s - 1];
-  const end = pageEnd();
-  let html = `<div class="head">سورة ${name} · الآيات ${AR(S.a)}–${AR(end)} من ${AR(total)}</div>`;
-  if (S.a === 1 && S.s !== 1 && S.s !== 9) html += `<div class="basmala">${Q[0][1][0]}</div>`;
-  for (let a = S.a; a <= end; a++) {
-    const toks = verses[a - 1].split(" "), idx = Engine.tokens(S.s, a);
-    const words = toks.map((t, k) => idx[k] >= 0 ? `<span class="w" data-i="${idx[k]}">${t}</span>` : t).join(" ");
-    html += `<span class="ay" data-a="${a}">${words}&nbsp;<span class="mark">﴿${AR(a)}﴾</span></span> `;
+  if (S.w >= verses[S.a - 1].split(" ").length) S.w = 0;
+  const last = Math.min(total, S.a + S.per - 1);
+  let html = `<div class="head" id="phead"></div>`;
+  if (S.a === 1 && S.w === 0 && S.s !== 1 && S.s !== 9) html += `<div class="basmala">${Q[0][1][0]}</div>`;
+  for (let a = S.a; a <= last; a++) {
+    const toks = verses[a - 1].split(" "), idx = Engine.tokens(S.s, a), from = a === S.a ? S.w : 0;
+    const words = toks.map((tk, k) => k < from ? "" : `<span class="${idx[k] >= 0 ? "w" : "t"}" data-a="${a}" data-k="${k}"${idx[k] >= 0 ? ` data-i="${idx[k]}"` : ""}>${tk}</span>`).filter(Boolean).join(" ");
+    html += `<span class="ay" data-a="${a}">${from ? '<span class="cont">…</span> ' : ""}${words}&nbsp;<span class="mark" data-a="${a}">﴿${AR(a)}﴾</span></span> `;
   }
-  $("text").innerHTML = html;
+  const box = $("text"); box.innerHTML = html;
+  // cut by rendered lines: the first token whose line crosses the limit starts the next page
+  const limit = $("stage").clientHeight * (S.top - S.offset) / 100 - 4;
+  PE = { a: last + 1, w: 0 };
+  if (box.scrollHeight > limit) {
+    const toks = box.querySelectorAll(".w, .t");
+    let cut = -1;
+    for (let k = 0; k < toks.length; k++) if (toks[k].offsetTop + toks[k].offsetHeight > limit) { cut = k; break; }
+    if (cut <= 0) cut = Math.min(1, toks.length);               // keep at least one token
+    if (cut < toks.length) {
+      const c = toks[cut]; PE = { a: +c.dataset.a, w: +c.dataset.k };
+      if (PE.w === 0 || (PE.a === S.a && PE.w === S.w)) { PE.w = 0; }
+      for (let k = cut; k < toks.length; k++) toks[k].remove();
+      box.querySelectorAll(".ay").forEach(ay => {
+        const a = +ay.dataset.a;
+        if (a > PE.a || (a === PE.a && PE.w === 0)) ay.remove();
+        else if (a === PE.a) ay.querySelector(".mark")?.remove();   // ayah continues on the next page
+      });
+      box.innerHTML = box.innerHTML.replace(/(\s|&nbsp;)+(<\/span>)/g, "$2");
+    }
+  }
+  const endA = pageEnd(), partial = PE.w !== 0;
+  $("phead").textContent = `سورة ${name} · الآيات ${AR(S.a)}–${AR(Math.max(S.a, endA))}${partial ? "…" : ""} من ${AR(total)}`;
   surahSel.value = S.s; $("ayah").value = S.a; $("ayah").max = total;
-  highlight(); save(); fitText();
+  highlight(); save();
 }
+new ResizeObserver(() => { if (Q.length) render(); }).observe($("stage"));
 
-/* Shrink the font just enough that the page never grows past the top of the stage,
-   whatever the size and offset sliders say. Re-run on resize and when the bar hides. */
-function fitText() {
-  const st = $("stage"), tx = $("text"), r = document.documentElement.style;
-  r.setProperty("--fit", 1);
-  const avail = st.clientHeight * (1 - S.offset / 100) - 8, need = tx.scrollHeight;
-  if (need > avail && need > 0) r.setProperty("--fit", Math.max(0.25, avail / need).toFixed(3));
+/* Earliest page start (within the surah) whose page still reaches `C` (flat index): the natural
+   "previous page". Binary search over word positions; each probe renders once. */
+function pageBefore(C) {
+  const s = S.s, lo0 = Engine.start(s);
+  let lo = lo0, hi = C - 1, best = C - 1;
+  const reach = x => { const t = tokenOf(s, x); S.a = t.a; S.w = t.w; render(); return pageEndFlat() >= C; };
+  while (lo <= hi) { const mid = (lo + hi) >> 1; if (reach(mid)) { best = mid; hi = mid - 1; } else lo = mid + 1; }
+  const t = tokenOf(s, best); S.a = t.a; S.w = t.w; render();
 }
-new ResizeObserver(() => fitText()).observe($("stage"));
+/* Page so that flat word i is visible, starting from the beginning of its ayah. */
+function pageContaining(i) {
+  const p = Engine.pos(i); S.s = p.s; S.a = p.a; S.w = 0; render();
+  for (let n = 0; n < 50 && pageEndFlat() <= i && PE.a <= Q[S.s - 1][1].length; n++) { S.a = PE.a; S.w = PE.w; render(); }
+}
 
 /* ---------- voice tracking ---------- */
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 let rec = null, listening = false, cursor = 0, curIdx = -1, miss = 0, finalBuf = "";
 
-function resync(a = S.a) { cursor = Engine.first(S.s, a); curIdx = -1; miss = 0; finalBuf = ""; }
+function resync(a = S.a) { cursor = a === S.a ? pageStartFlat() : Engine.first(S.s, a); curIdx = -1; miss = 0; finalBuf = ""; }
 
 function highlight() {
   const box = $("text");
@@ -746,18 +802,20 @@ function setPos(i) {
   if (srv) serverCtx();
   const p = Engine.pos(i);
   if (p.s !== S.s) {
-    S.s = p.s; S.a = p.a; render();
+    pageContaining(i);
     toast("سورة " + Q[p.s - 1][0]);
     return;
   }
-  // when the recited ayah is the last one on the page, move the page so the next ayahs are visible
-  if (S.follow && (p.a < S.a || p.a > pageEnd() || (p.a === pageEnd() && p.a < Q[S.s - 1][1].length))) {
-    S.a = p.a; render();
-  } else highlight();
+  if (!S.follow) { highlight(); return; }
+  const total = Q[S.s - 1][1].length;
+  if (i < pageStartFlat() || i >= pageEndFlat()) pageContaining(i);                 // off the page: show it
+  // whole-ayah pages: when the recited ayah is the last one on the page, rebase so the next ayahs are visible
+  else if (PE.w === 0 && p.a === pageEnd() && p.a < total && (p.a !== S.a || S.w !== 0)) { S.a = p.a; S.w = 0; render(); }
+  else highlight();
 }
 
 function gotoSurah(n, announce = true) {
-  S.s = n; S.a = 1; render(); resync();
+  S.s = n; S.a = 1; S.w = 0; render(); resync();
   if (announce) toast("سورة " + Q[n - 1][0]);
 }
 
@@ -994,13 +1052,13 @@ const toggleMic = () => { listening ? stopMic() : startMic(); toast(listening ? 
 function page(dir) {
   const len = Q[S.s - 1][1].length;
   if (dir > 0) {
-    if (S.a + S.per <= len) S.a += S.per;
-    else if (S.s < 114) { S.s++; S.a = 1; toast("سورة " + Q[S.s - 1][0]); }
+    if (PE.a <= len) { S.a = PE.a; S.w = PE.w; render(); }
+    else if (S.s < 114) { S.s++; S.a = 1; S.w = 0; render(); toast("سورة " + Q[S.s - 1][0]); }
   } else {
-    if (S.a > 1) S.a = Math.max(1, S.a - S.per);
-    else if (S.s > 1) { S.s--; const l = Q[S.s - 1][1].length; S.a = Math.max(1, l - S.per + 1); toast("سورة " + Q[S.s - 1][0]); }
+    if (S.a > 1 || S.w > 0) pageBefore(pageStartFlat());
+    else if (S.s > 1) { S.s--; pageBefore(Engine.end(S.s)); toast("سورة " + Q[S.s - 1][0]); }
   }
-  resync(); render();
+  resync();
 }
 let lastPointer = "mouse";
 document.addEventListener("pointerdown", e => { lastPointer = e.pointerType; }, true);
@@ -1066,6 +1124,9 @@ function applyLook() {
   const r = document.documentElement.style;
   r.setProperty("--size", S.size + "px");
   r.setProperty("--offset", S.offset + "%");
+  S.top = Math.max(S.offset + 12, S.top);
+  r.setProperty("--top", S.top + "%");
+  $("top").value = S.top; $("topv").textContent = AR(S.top) + "٪";
   r.setProperty("--glow", S.glow / 100);
   r.setProperty("--verse", S.color);
   document.querySelectorAll(".sw").forEach(b => b.setAttribute("aria-pressed", b.dataset.c === S.color));
@@ -1075,9 +1136,9 @@ function applyLook() {
   $("lead").value = S.lead; $("leadv").textContent = AR(S.lead) + "٪";
   $("engine").value = S.engine; $("azKey").value = S.azKey; $("azRegion").value = S.azRegion; $("azureBox").hidden = S.engine !== "azure";
   $("srvUrl").value = S.srvUrl; $("srvToken").value = S.srvToken; $("serverBox").hidden = S.engine !== "server";
-  save(); fitText();
+  save();
 }
-const LOOK_DEFAULTS = { per: 3, size: 34, offset: 8, glow: 100, color: "#f3f1e7" };
+const LOOK_DEFAULTS = { per: 3, size: 34, offset: 8, top: 55, glow: 100, color: "#f3f1e7" };
 
 /* ---------- posture engine ----------
    Show text while the head is near the calibrated qiyam angle; hide when it drops well below it.
@@ -1098,7 +1159,7 @@ function applyHide() {
 
 function onPitch(p, source) {
   pitch = p;
-  if (source) { pitchSource = source; $("src").textContent = "المصدر: " + source; }
+  if (source) { pitchSource = source; $("src").textContent = "المصدر: " + source; document.body.classList.toggle("sim-src", source === "محاكاة"); }
   $("pitchv").textContent = p.toFixed(0) + "°";
   const pos = v => `${((Math.max(-100, Math.min(20, v)) + 100) / 120) * 100}%`;
   $("gNow").style.left = pos(p); $("gShow").style.left = pos(S.base - SHOW_BAND); $("gHide").style.left = pos(S.base - HIDE_BAND);
@@ -1176,16 +1237,17 @@ window.QuranGlasses = {
   imu,
   pushPose({ pitch: p }) { if (typeof p === "number" && isFinite(p)) onPitch(p, "حساس النظارة"); },
   next: () => page(1), prev: () => page(-1),
-  goto(s, a = 1) { S.s = s; S.a = a; resync(); render(); },
+  goto(s, a = 1) { S.s = s; S.a = a; S.w = 0; resync(); render(); },
   hear: text => onHeard(text, true, text)   // for testing without a microphone
 };
 
 /* ---------- wiring ---------- */
 surahSel.onchange = () => gotoSurah(+surahSel.value, false);
-$("ayah").onchange = e => { S.a = +e.target.value || 1; resync(); render(); };
-$("per").onchange = e => { S.per = Math.min(15, Math.max(1, +e.target.value || 1)); render(); applyLook(); };
-$("size").oninput = e => { S.size = +e.target.value; applyLook(); };
-$("offset").oninput = e => { S.offset = +e.target.value; applyLook(); };
+$("ayah").onchange = e => { S.a = +e.target.value || 1; S.w = 0; resync(); render(); };
+$("per").onchange = e => { S.per = Math.min(15, Math.max(1, +e.target.value || 1)); applyLook(); render(); };
+$("size").oninput = e => { S.size = +e.target.value; applyLook(); render(); };
+$("offset").oninput = e => { S.offset = +e.target.value; applyLook(); render(); };
+$("top").oninput = e => { S.top = +e.target.value; applyLook(); render(); };
 $("glow").oninput = e => { S.glow = +e.target.value; applyLook(); };
 $("lead").oninput = e => { S.lead = +e.target.value; applyLook(); };
 $("engine").onchange = e => { const was = listening; if (was) stopMic(); S.engine = e.target.value; applyLook(); if (was) startMic(); };

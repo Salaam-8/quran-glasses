@@ -154,7 +154,8 @@ const Engine = (function () {
     pos: i => ({ s: SUR[i], a: AYA[i] }),
     first: (s, a) => { const r = TOK[s][a - 1].find(x => x >= 0); return r === undefined ? SSTART[s] : r; },
     tokens: (s, a) => TOK[s][a - 1],
-    start: s => SSTART[s]
+    start: s => SSTART[s],
+    end: s => SEND[s]
   };
 })();
 if (typeof module !== "undefined") module.exports = Engine;
