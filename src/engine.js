@@ -84,7 +84,8 @@ const Engine = (function () {
 
   /* Track: cursor = flat index of the next expected word, surah = current surah.
      mode 'local' searches near the cursor; 'surah' the whole current surah; 'global' the whole Quran. */
-  function locate(text, cursor, surah, mode) {
+  function locate(text, cursor, surah, mode, opts) {
+    const scope = (opts && opts.scope) || "all";   // "surah" | "next" | "all"
     const sp = spoken(text).slice(-8);
     if (mode === "local") {
       // Fast path for short interim results: the last heard word is one of the next three expected
@@ -104,15 +105,39 @@ const Engine = (function () {
       return adj >= need ? r.end : null;
     }
     if (sp.length < 2) return null;
-    // 'lost': compare the best place in the current surah with the best place in the whole Quran
+    // 'lost': compare the best place in the current surah with the best place in the wider scope
     if (sp.length < 4) return null;
-    const rg = align(sp, 0, KEYS.length);
     const rs = align(sp, SSTART[surah], SEND[surah]);
-    const gOk = rg.score >= 6 && rg.score - rg.second >= 1.5 && !isBasmalaOnly(rg.end);
     const sOk = rs.score >= 5 && rs.score - rs.second >= 1 && !isBasmalaOnly(rs.end);
+    const all = align(sp, 0, KEYS.length);
+    const rg = scope === "all" ? all : scope === "next" ? align(sp, SSTART[surah], SEND[Math.min(114, surah + 1)]) : rs;
+    // the whole-Quran best is a veto: when the phrase fits somewhere else much better than inside the
+    // allowed scope, the in-scope match is an echo of common words, so stay put rather than jump
+    if (all.score > rg.score + 1.5 && all.score > rs.score + 1.5) return null;
+    if (scope === "surah") return sOk ? rs.end : null;
+    const gOk = rg.score >= 6 && rg.score - rg.second >= 1.5 && !isBasmalaOnly(rg.end);
     if (gOk && (!sOk || rg.score > rs.score + 0.5)) return rg.end;
     if (sOk && rs.score >= rg.score - 0.5) return rs.end;
     return null;
+  }
+
+  /* Far-jump gate: a move of more than `limit` ayahs (or to another surah) is accepted only when two
+     consecutive final results propose the same place (within one ayah). Near moves pass at once. */
+  function jumpGate(limit = 10) {
+    let pending = null;
+    return {
+      accept(i, cur) {
+        if (cur == null || cur < 0) { pending = null; return i; }
+        const a = SUR[i], b = SUR[cur];
+        const near = a === b && Math.abs(AYA[i] - AYA[cur]) <= limit;
+        if (near) { pending = null; return i; }
+        if (pending && pending.s === a && Math.abs(pending.a - AYA[i]) <= 1) { pending = null; return i; }
+        pending = { s: a, a: AYA[i] };
+        return null;
+      },
+      far: (i, cur) => cur == null || cur < 0 ? false : SUR[i] !== SUR[cur] || Math.abs(AYA[i] - AYA[cur]) > limit,
+      reset() { pending = null; }
+    };
   }
 
   /* Among the recogniser's alternatives for one utterance, pick the one that fits the text near the
@@ -150,7 +175,7 @@ const Engine = (function () {
   }
 
   return {
-    build, locate, bestAlternative, surahCommand, norm,
+    build, locate, bestAlternative, surahCommand, jumpGate, norm,
     pos: i => ({ s: SUR[i], a: AYA[i] }),
     first: (s, a) => { const r = TOK[s][a - 1].find(x => x >= 0); return r === undefined ? SSTART[s] : r; },
     tokens: (s, a) => TOK[s][a - 1],

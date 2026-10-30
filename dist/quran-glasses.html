@@ -121,7 +121,8 @@ body.sim-src .toplimit { display: block; }
   font-family: var(--f-ui); font-size: 22px; color: var(--accent); white-space: nowrap;
   opacity: 0; transition: opacity .3s ease; pointer-events: none;
 }
-.toast.on { opacity: 1; }
+.toast.on { opacity: 1; pointer-events: auto; }
+.toast .btn { margin-inline-start: 10px; padding: 2px 10px; font-size: .9em; color: var(--accent); border-color: var(--accent); }
 
 /* surah picker, readable inside the glasses */
 .picker {
@@ -184,6 +185,13 @@ body.sim-src .toplimit { display: block; }
     <button class="btn" id="mic" title="تشغيل وإيقاف تتبع الصوت (V)">تشغيل تتبّع الصوت</button>
     <span class="chip" id="micState">الصوت متوقف</span>
     <label class="f"><input id="follow" type="checkbox" checked> قلب الصفحة مع القراءة</label>
+    <label class="f" title="أين يبحث التطبيق عن موضعك إذا ضاع. القفز خارج السورة لا يحدث في الوضع الافتراضي إلا بأمر صوتي «سورة …» أو من القائمة">نطاق البحث
+      <select id="scope">
+        <option value="surah">السورة الحالية</option>
+        <option value="next">السورة الحالية والتي بعدها</option>
+        <option value="all">القرآن كله</option>
+      </select>
+    </label>
     <label class="f" title="يحرّك التحديد للأمام بين نتائج التعرف بنسبة من سرعة تلاوتك. صفر = بلا استباق، ١٠٠٪ = بسرعة تلاوتك نفسها">استباق التحديد <input id="lead" type="range" min="0" max="150" step="10" value="80"> <span class="num" id="leadv">٨٠٪</span></label>
     <label class="f">محرك الصوت
       <select id="engine">
@@ -373,7 +381,8 @@ const Engine = (function () {
 
   /* Track: cursor = flat index of the next expected word, surah = current surah.
      mode 'local' searches near the cursor; 'surah' the whole current surah; 'global' the whole Quran. */
-  function locate(text, cursor, surah, mode) {
+  function locate(text, cursor, surah, mode, opts) {
+    const scope = (opts && opts.scope) || "all";   // "surah" | "next" | "all"
     const sp = spoken(text).slice(-8);
     if (mode === "local") {
       // Fast path for short interim results: the last heard word is one of the next three expected
@@ -393,15 +402,39 @@ const Engine = (function () {
       return adj >= need ? r.end : null;
     }
     if (sp.length < 2) return null;
-    // 'lost': compare the best place in the current surah with the best place in the whole Quran
+    // 'lost': compare the best place in the current surah with the best place in the wider scope
     if (sp.length < 4) return null;
-    const rg = align(sp, 0, KEYS.length);
     const rs = align(sp, SSTART[surah], SEND[surah]);
-    const gOk = rg.score >= 6 && rg.score - rg.second >= 1.5 && !isBasmalaOnly(rg.end);
     const sOk = rs.score >= 5 && rs.score - rs.second >= 1 && !isBasmalaOnly(rs.end);
+    const all = align(sp, 0, KEYS.length);
+    const rg = scope === "all" ? all : scope === "next" ? align(sp, SSTART[surah], SEND[Math.min(114, surah + 1)]) : rs;
+    // the whole-Quran best is a veto: when the phrase fits somewhere else much better than inside the
+    // allowed scope, the in-scope match is an echo of common words, so stay put rather than jump
+    if (all.score > rg.score + 1.5 && all.score > rs.score + 1.5) return null;
+    if (scope === "surah") return sOk ? rs.end : null;
+    const gOk = rg.score >= 6 && rg.score - rg.second >= 1.5 && !isBasmalaOnly(rg.end);
     if (gOk && (!sOk || rg.score > rs.score + 0.5)) return rg.end;
     if (sOk && rs.score >= rg.score - 0.5) return rs.end;
     return null;
+  }
+
+  /* Far-jump gate: a move of more than `limit` ayahs (or to another surah) is accepted only when two
+     consecutive final results propose the same place (within one ayah). Near moves pass at once. */
+  function jumpGate(limit = 10) {
+    let pending = null;
+    return {
+      accept(i, cur) {
+        if (cur == null || cur < 0) { pending = null; return i; }
+        const a = SUR[i], b = SUR[cur];
+        const near = a === b && Math.abs(AYA[i] - AYA[cur]) <= limit;
+        if (near) { pending = null; return i; }
+        if (pending && pending.s === a && Math.abs(pending.a - AYA[i]) <= 1) { pending = null; return i; }
+        pending = { s: a, a: AYA[i] };
+        return null;
+      },
+      far: (i, cur) => cur == null || cur < 0 ? false : SUR[i] !== SUR[cur] || Math.abs(AYA[i] - AYA[cur]) > limit,
+      reset() { pending = null; }
+    };
   }
 
   /* Among the recogniser's alternatives for one utterance, pick the one that fits the text near the
@@ -439,7 +472,7 @@ const Engine = (function () {
   }
 
   return {
-    build, locate, bestAlternative, surahCommand, norm,
+    build, locate, bestAlternative, surahCommand, jumpGate, norm,
     pos: i => ({ s: SUR[i], a: AYA[i] }),
     first: (s, a) => { const r = TOK[s][a - 1].find(x => x >= 0); return r === undefined ? SSTART[s] : r; },
     tokens: (s, a) => TOK[s][a - 1],
@@ -659,14 +692,22 @@ const store = {
 };
 const S = Object.assign({ s: 1, a: 1, w: 0, per: 3, size: 34, offset: 8, top: 55, glow: 100, color: "#f3f1e7", base: -15,
   auto: true, advance: false, follow: true, axis: "gaze", inv: false, nod: null, lead: 80,
-  engine: "browser", azKey: "", azRegion: "uaenorth", srvUrl: "", srvToken: "" }, store.get());
+  engine: "browser", azKey: "", azRegion: "uaenorth", srvUrl: "", srvToken: "", scope: "surah" }, store.get());
 if (S.axis === "learned" && !S.nod) S.axis = "gaze";
 const save = () => store.set(S);
 
 let toastT;
-function toast(msg) {
+function toast(msg, ms = 2200) {
   const t = $("toast"); t.textContent = msg; t.classList.add("on");
-  clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("on"), 2200);
+  clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("on"), ms);
+}
+/* toast with one action button, e.g. «رجوع» after a big jump */
+function toastAction(msg, label, fn, ms = 5000) {
+  const t = $("toast"); t.textContent = msg + " ";
+  const b = document.createElement("button"); b.className = "btn"; b.textContent = label; b.id = "toastBtn";
+  b.onclick = () => { t.classList.remove("on"); fn(); };
+  t.appendChild(b); t.classList.add("on");
+  clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("on"), ms);
 }
 
 /* ---------- reader ---------- */
@@ -772,6 +813,18 @@ function highlight() {
   });
 }
 
+/* Position history: the last 5 places before a jump, for «رجوع» / Backspace. */
+const gate = Engine.jumpGate(10);
+function pushHist() {
+  S.hist = (S.hist || []).concat([{ s: S.s, a: S.a, w: S.w, i: curIdx >= 0 ? curIdx : cursor }]).slice(-5); save();
+}
+function goBack() {
+  const h = (S.hist || []).pop(); if (!h) { toast("لا يوجد موضع سابق"); return; }
+  save(); S.s = h.s; S.a = h.a; S.w = h.w; render(); cursor = h.i; curIdx = -1; miss = 0; gate.reset(); highlight();
+  toast(`رجعت إلى سورة ${Q[S.s - 1][0]} · آية ${AR(S.a)}`);
+}
+const bigJump = (i, cur) => cur < 0 ? false : Engine.pos(i).s !== S.s || Math.abs(Engine.pos(i).a - Engine.pos(cur).a) > S.per;
+
 /* Pace: words per second measured between real recogniser updates, used to nudge the highlight
    forward while waiting for the next update (the recogniser trails speech by a few hundred ms). */
 let pace = 1.6, lastReal = null;
@@ -796,6 +849,12 @@ function predictAhead() {
 setInterval(predictAhead, 120);
 
 function setPos(i) {
+  const was = curIdx >= 0 ? curIdx : cursor, big = bigJump(i, was);
+  if (big) {
+    pushHist();
+    const p = Engine.pos(i);
+    toastAction(`انتقل إلى سورة ${Q[p.s - 1][0]} · آية ${AR(p.a)}`, "رجوع", goBack, 5000);
+  }
   notePace(i);
   curIdx = i; cursor = i + 1; miss = 0;
   if (az) azureBias();
@@ -803,7 +862,7 @@ function setPos(i) {
   const p = Engine.pos(i);
   if (p.s !== S.s) {
     pageContaining(i);
-    toast("سورة " + Q[p.s - 1][0]);
+    if (!big) toast("سورة " + Q[p.s - 1][0]);
     return;
   }
   if (!S.follow) { highlight(); return; }
@@ -815,7 +874,8 @@ function setPos(i) {
 }
 
 function gotoSurah(n, announce = true) {
-  S.s = n; S.a = 1; S.w = 0; render(); resync();
+  if (n !== S.s) pushHist();
+  S.s = n; S.a = 1; S.w = 0; render(); resync(); gate.reset();
   if (announce) toast("سورة " + Q[n - 1][0]);
 }
 
@@ -832,7 +892,12 @@ function onHeard(text, isFinal, latest) {
     // A single short unmatched phrase is usually noise or a slip; search the whole Quran only after
     // a second miss, or at once when the phrase is long enough to be unambiguous.
     const nLatest = Engine.norm(latest).split(" ").filter(Boolean).length;
-    if (miss >= 2 || nLatest >= 5) i = Engine.locate(text, cursor, S.s, "lost");
+    if (miss >= 2 || nLatest >= 5) i = Engine.locate(text, cursor, S.s, "lost", { scope: S.scope });
+  }
+  if (i != null) {
+    const cur = curIdx >= 0 ? curIdx : cursor;
+    if (isFinal) i = gate.accept(i, cur);           // far moves need two consecutive finals
+    else if (gate.far(i, cur)) i = null;            // interim results never jump far
   }
   if (i != null) setPos(i);
 }
@@ -1136,6 +1201,7 @@ function applyLook() {
   $("lead").value = S.lead; $("leadv").textContent = AR(S.lead) + "٪";
   $("engine").value = S.engine; $("azKey").value = S.azKey; $("azRegion").value = S.azRegion; $("azureBox").hidden = S.engine !== "azure";
   $("srvUrl").value = S.srvUrl; $("srvToken").value = S.srvToken; $("serverBox").hidden = S.engine !== "server";
+  $("scope").value = S.scope;
   save();
 }
 const LOOK_DEFAULTS = { per: 3, size: 34, offset: 8, top: 55, glow: 100, color: "#f3f1e7" };
@@ -1254,6 +1320,7 @@ $("engine").onchange = e => { const was = listening; if (was) stopMic(); S.engin
 $("azKey").onchange = e => { S.azKey = e.target.value.trim(); save(); };
 $("azRegion").onchange = e => { S.azRegion = e.target.value.trim().toLowerCase() || "uaenorth"; applyLook(); };
 $("srvUrl").onchange = e => { S.srvUrl = e.target.value.trim(); save(); };
+$("scope").onchange = e => { S.scope = e.target.value; gate.reset(); save(); };
 $("srvToken").onchange = e => { S.srvToken = e.target.value.trim(); save(); };
 $("resetLook").onclick = () => { Object.assign(S, LOOK_DEFAULTS); applyLook(); render(); toast("رجعت إعدادات العرض إلى الافتراضي"); };
 document.querySelectorAll(".sw").forEach(b => b.onclick = () => { S.color = b.dataset.c; applyLook(); });

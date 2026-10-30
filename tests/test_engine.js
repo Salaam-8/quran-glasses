@@ -51,8 +51,28 @@ t('cmd مريم', E.surahCommand('سورة مريم'), 19);
 t('An-Nur 24:1 not a command', E.surahCommand('سورة أنزلناها وفرضناها'), null);
 let T = Date.now(); for (let k = 0; k < 5; k++) E.locate('تبارك الذي بيده الملك وهو على كل شيء قدير', 0, 1, 'lost');
 console.log('global search ms:', (Date.now() - T) / 5);
-console.log(pass, 'pass', fail, 'fail');
 t('in Kahf, recite Mulk → 67', show(E.locate('تبارك الذي بيده الملك وهو على كل شيء قدير', E.first(18,45), 18, 'lost')), '67:1');
 t('in Baqarah, recite Fatiha → 1', show(E.locate('الحمد لله رب العالمين الرحمن الرحيم', E.first(2,20), 2, 'lost')), '1:3');
 t('in Kahf, later Kahf ayah → 18:10', show(E.locate('إذ أوى الفتية إلى الكهف فقالوا ربنا آتنا من لدنك رحمة', E.first(18,1), 18, 'lost')), '18:10');
+// search scope
+const K45 = E.first(18, 45);
+t('scope surah: Mulk from Kahf refused', show(E.locate('تبارك الذي بيده الملك وهو على كل شيء قدير', K45, 18, 'lost', { scope: 'surah' })), 'NONE');
+t('scope surah: later Kahf ayah found', show(E.locate('إذ أوى الفتية إلى الكهف فقالوا ربنا آتنا من لدنك رحمة', E.first(18, 1), 18, 'lost', { scope: 'surah' })), '18:10');
+t('scope next: Maryam from Kahf found', show(E.locate('ذكر رحمت ربك عبده زكريا إذ نادى ربه نداء خفيا', K45, 18, 'lost', { scope: 'next' })), '19:3');
+t('scope next: Mulk from Kahf refused', show(E.locate('تبارك الذي بيده الملك وهو على كل شيء قدير', K45, 18, 'lost', { scope: 'next' })), 'NONE');
+t('scope all: Mulk from Kahf found', show(E.locate('تبارك الذي بيده الملك وهو على كل شيء قدير', K45, 18, 'lost', { scope: 'all' })), '67:1');
+// far-jump gate: more than 10 ayahs away needs two consecutive finals
+{
+  const g = E.jumpGate(10), cur = E.first(2, 5), near = E.first(2, 12), far = E.first(2, 30), far2 = E.first(2, 31), other = E.first(67, 1);
+  t('gate: no position yet passes', g.accept(far, -1), far);
+  t('gate: within 10 ayahs passes', g.accept(near, cur), near);
+  t('gate: far jump held once', g.accept(far, cur), null);
+  t('gate: same far place twice accepted', g.accept(far2, cur), far2);
+  t('gate: other surah held once', g.accept(other, cur), null);
+  t('gate: different far place resets', g.accept(far, cur), null);
+  t('gate: confirmed after reset', g.accept(far, cur), far);
+  t('gate: far() reports distance', JSON.stringify([g.far(near, cur), g.far(far, cur), g.far(other, cur)]), '[false,true,true]');
+}
+
+console.log(pass, 'pass', fail, 'fail');
 if (fail) process.exit(1);

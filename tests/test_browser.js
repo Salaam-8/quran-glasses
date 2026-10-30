@@ -45,8 +45,15 @@ const t = (name, got, want) => {
     t("auto page turn", await head(), "سورة الفاتحة · الآيات ٤–٦ من ٧");
     await p.evaluate(() => QuranGlasses.hear("سورة الكهف"));
     t("voice command surah", await head(), "سورة الكهف · الآيات ١–٣ من ١١٠");
-    await p.evaluate(() => { QuranGlasses.hear("تبارك الذي بيده الملك"); QuranGlasses.hear("تبارك الذي بيده الملك وهو على كل شيء قدير"); });
+    await p.evaluate(() => { QuranGlasses.hear("تبارك الذي بيده الملك وهو على كل شيء قدير"); QuranGlasses.hear("تبارك الذي بيده الملك وهو على كل شيء قدير"); });
+    t("default scope never leaves the surah", await head(), "سورة الكهف · الآيات ١–٣ من ١١٠");
+    await p.evaluate(() => { S.scope = "all"; applyLook(); QuranGlasses.hear("تبارك الذي بيده الملك وهو على كل شيء قدير"); });
+    t("far jump held until a second final", await head(), "سورة الكهف · الآيات ١–٣ من ١١٠");
+    await p.evaluate(() => QuranGlasses.hear("تبارك الذي بيده الملك وهو على كل شيء قدير"));
     t("finds another surah by recitation", await head(), "سورة الملك · الآيات ١–٣ من ٣٠");
+    t("big jump offers undo", await p.textContent("#toastBtn"), "رجوع");
+    await p.click("#toastBtn"); t("undo returns to the previous place", await head(), "سورة الكهف · الآيات ١–٣ من ١١٠");
+    await p.evaluate(() => { S.scope = "surah"; applyLook(); });
     await p.keyboard.press("KeyS"); await p.keyboard.press("Digit3"); await p.keyboard.press("Digit6");
     t("picker by number", (await p.textContent(".picker .sel")).includes("يس"), true);
     await p.keyboard.press("Enter");
