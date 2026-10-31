@@ -271,6 +271,57 @@ const t = (name, got, want) => {
     await ctx.close();
   }
 
+  // ---- Android app bridge: window.QGNative injected before the page loads (what the app does) ----
+  {
+    const p = await b.newPage({ viewport: { width: 1280, height: 720 } });
+    const errs = []; p.on("pageerror", e => errs.push(e.message));
+    await p.addInitScript(() => {
+      window.__calls = [];
+      let st = "loading"; setTimeout(() => st = "ready", 700);
+      window.QGNative = {
+        available: () => true, status: () => st,
+        start: () => { __calls.push("start"); setTimeout(() => QGN.onState("listening"), 10); },
+        stop: () => __calls.push("stop"),
+        setContext: c => __calls.push("ctx:" + c),
+      };
+    });
+    await p.goto(url); await p.evaluate(() => localStorage.clear()); await p.reload(); await p.waitForTimeout(300);
+    const head = () => p.textContent(".head");
+    t("app: on-device engine selected", await p.evaluate(() => [S.engine, !document.getElementById("engNative").hidden]), ["native", true]);
+    t("app: starts in glasses mode", await p.evaluate(() => document.body.classList.contains("focus-mode")), true);
+    t("app: waits for the model to load", await p.evaluate(() => [listening, document.getElementById("micState").textContent.includes("تحميل")]), [true, true]);
+    await p.waitForTimeout(1000);
+    t("app: listens automatically once the model is ready", await p.evaluate(() => [__calls.includes("start"), document.getElementById("micState").textContent]), [true, "يستمع… (على الجهاز، بدون إنترنت)"]);
+    t("app: context sent on start", await p.evaluate(() => __calls.some(c => c.startsWith("ctx:"))), true);
+    await p.evaluate(() => { QGN.onPartial("الحمد لله"); });
+    t("app: partial results highlight", await p.evaluate(() => document.querySelector(".ay.cur")?.dataset.a), "2");
+    await p.evaluate(() => { QGN.onFinal("الحمد لله رب العالمين"); QGN.onFinal("الرحمن الرحيم مالك يوم الدين"); });
+    t("app: final results move the window", await head(), "سورة الفاتحة · الآيات ٤–٦ من ٧");
+    t("app: context follows the reader", await p.evaluate(() => __calls.filter(c => c.startsWith("ctx:")).length >= 2), true);
+    // device sensor as quaternions: teach-in, then posture hides the text in glasses mode
+    const pose = await p.evaluate(async () => {
+      const wait = ms => new Promise(r => setTimeout(r, ms));
+      const feed = deg => { const h = deg * Math.PI / 360; QuranGlasses.pushQuat(Math.cos(h), Math.sin(h), 0, 0); };
+      feed(0); await wait(60);
+      const status = document.getElementById("hidst").textContent;
+      document.getElementById("learn").click(); await wait(1200); feed(-110); await wait(3400);
+      for (let k = 0; k < 6; k++) { feed(-110); await wait(120); }
+      const down = document.getElementById("text").classList.contains("off");
+      for (let k = 0; k < 6; k++) { feed(0); await wait(120); }
+      return { status, learned: S.axis, down, up: !document.getElementById("text").classList.contains("off") };
+    });
+    t("app: device sensor connects by itself", pose.status, "موصولة: حساس الجهاز");
+    t("app: teach-in and posture with the device sensor", [pose.learned, pose.down, pose.up], ["learned", true, true]);
+    // hardware buttons
+    await p.evaluate(() => QuranGlasses.key("next"));
+    t("app: volume key = next page", await head(), "سورة الفاتحة · الآية ٧ من ٧".replace("الآية ٧", "الآيات ٧–٧"));
+    await p.evaluate(() => QuranGlasses.key("pause")); t("app: media key = pause", await p.evaluate(() => paused), true);
+    await p.evaluate(() => QuranGlasses.key("pause")); t("app: media key again = resume", await p.evaluate(() => paused), false);
+    await p.evaluate(() => QuranGlasses.key("mic")); t("app: stopping sends stop", await p.evaluate(() => __calls.includes("stop") && !listening), true);
+    await p.evaluate(() => QGN.onError("المايك مرفوض")); t("app: errors are shown", await p.textContent("#micState"), "المايك مرفوض");
+    t("app: no page errors", errs.length, 0);
+    await p.close();
+  }
   await b.close(); server.close();
   console.log(`${pass} pass, ${fail} fail`);
   if (fail) process.exit(1);

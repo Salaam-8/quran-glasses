@@ -9,6 +9,7 @@ Run:  py build.py        (Windows)
 No third-party packages needed.
 """
 import base64
+import re
 import json
 import shutil
 from pathlib import Path
@@ -66,7 +67,7 @@ MANIFEST = {
 }
 
 # Bump CACHE whenever you deploy so phones pick up the new version.
-SERVICE_WORKER = """const CACHE = "quran-glasses-v21";
+SERVICE_WORKER = """const CACHE = "quran-glasses-v22";
 const FILES = ["./", "index.html", "manifest.webmanifest", "icon-192.png", "icon-512.png"];
 self.addEventListener("install", e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES))); self.skipWaiting(); });
 self.addEventListener("activate", e => {
@@ -86,6 +87,13 @@ def main():
     page = build_single_file()
     DIST.mkdir(exist_ok=True)
     (DIST / "quran-glasses.html").write_text(page, encoding="utf-8")
+
+    # Android app (android/): same single page, offline: drop the optional Google Fonts links
+    droid = DIST / "android" / "web"
+    droid.mkdir(parents=True, exist_ok=True)
+    offline = re.sub(r'<link rel="(?:preconnect|stylesheet)" href="https://fonts\.[^"]*"[^>]*>\n?', "", page)
+    assert "fonts.googleapis" not in offline
+    (droid / "index.html").write_text(offline, encoding="utf-8")
 
     app = DIST / "app"
     shutil.rmtree(app, ignore_errors=True)

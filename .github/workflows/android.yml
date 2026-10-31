@@ -1,0 +1,108 @@
+# Builds the offline Android app (android/): speech models, core tests, APK, emulator test,
+# and publishes the APK as the "android-latest" pre-release of this repository.
+name: Android app
+
+on:
+  push:
+    branches: [main]
+    paths: ["android/**", "src/**", "build.py", ".github/workflows/android.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android
+  cancel-in-progress: true
+
+env:
+  WHISPER_TAG: v1.9.5
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Web page for the app
+        run: python3 build.py
+
+      - name: whisper.cpp source
+        run: android/scripts/ci-run.sh android/scripts/fetch-whisper.sh
+
+      - name: Cache speech models
+        id: models
+        uses: actions/cache@v4
+        with:
+          path: android/build-assets/models
+          key: models-${{ env.WHISPER_TAG }}-${{ hashFiles('android/scripts/build-models.sh') }}
+
+      - name: Speech models (Quran-tuned Whisper -> ggml)
+        if: steps.models.outputs.cache-hit != 'true'
+        run: |
+          pip install --quiet --extra-index-url https://download.pytorch.org/whl/cpu "torch>=2.2" "transformers>=4.40,<5" huggingface_hub numpy safetensors
+          android/scripts/ci-run.sh android/scripts/build-models.sh
+
+      - name: Core tests (streaming policy)
+        working-directory: android
+        run: scripts/ci-run.sh ./gradlew -p core test --console=plain
+
+      - name: Build APK
+        working-directory: android
+        env:
+          VERSION_CODE: ${{ github.run_number }}
+        run: scripts/ci-run.sh ./gradlew :app:assembleRelease :app:assembleReleaseAndroidTest --console=plain
+
+      - name: Collect APK
+        run: |
+          mkdir -p out
+          cp android/app/build/outputs/apk/release/app-release.apk "out/QuranGlasses-0.1.${{ github.run_number }}.apk"
+          ls -la out android/build-assets/models
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: QuranGlasses-apk
+          path: out/*.apk
+
+      - name: Enable KVM for the emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Emulator test (page offline, bridge, on-device model, buttons, sensor)
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          ram-size: 4096M
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-boot-anim -camera-back none -noaudio
+          working-directory: android
+          script: scripts/ci-run.sh ./gradlew :app:connectedReleaseAndroidTest --console=plain
+
+      - name: Publish APK (android-latest pre-release)
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete android-latest --yes --cleanup-tag || true
+          gh release create android-latest out/*.apk --prerelease --target "${{ github.sha }}" \
+            --title "Android app 0.1.${{ github.run_number }}" \
+            --notes "Offline build from ${{ github.sha }}. Install the APK on the glasses or an Android phone (allow installs from this source)."

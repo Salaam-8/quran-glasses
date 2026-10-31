@@ -211,6 +211,7 @@ body.sim-src .toplimit { display: block; }
     <label class="f" title="يحرّك التحديد للأمام بين نتائج التعرف بنسبة من سرعة تلاوتك. صفر = بلا استباق، ١٠٠٪ = بسرعة تلاوتك نفسها">استباق التحديد <input id="lead" type="range" min="0" max="150" step="10" value="80"> <span class="num" id="leadv">٨٠٪</span></label>
     <label class="f">محرك الصوت
       <select id="engine">
+        <option value="native" id="engNative" hidden>على الجهاز (بدون إنترنت)</option>
         <option value="browser">المتصفح (Google عبر Chrome)</option>
         <option value="azure">Azure سحابي (بلا طنين، أسرع)</option>
         <option value="server">سيرفر قرآني (مجاني، نموذج تلاوة)</option>
@@ -662,8 +663,8 @@ const VitureIMU = (() => {
   class Session {
     constructor() { this.devices = []; this.gen = null; this.frames = 0; this.onPose = null; this.onStatus = null; this.lastAt = 0; }
     status(s) { this.onStatus?.(s); }
-    get connected() { return this.devices.some(d => d.opened); }
-    get name() { const d = this.devices[0]; return d ? `${NAMES[d.productId] || d.productName || "VITURE"} · ${d.productId.toString(16)} · Gen${this.gen}` : ""; }
+    get connected() { return !!this.nativeActive || this.devices.some(d => d.opened); }
+    get name() { if (this.nativeActive) return "حساس الجهاز"; const d = this.devices[0]; return d ? `${NAMES[d.productId] || d.productName || "VITURE"} · ${d.productId.toString(16)} · Gen${this.gen}` : ""; }
 
     // Prompts the chooser (needs a user gesture). Afterwards reconnect() works silently on reload.
     async connect() {
@@ -952,6 +953,7 @@ function setPos(i) {
   curIdx = i; cursor = i + 1; miss = 0;
   if (az) azureBias();
   if (srv) serverCtx();
+  nativeCtx();
   const p = Engine.pos(i);
   if (p.s !== S.s) {
     placeWindow(i);
@@ -1014,6 +1016,7 @@ function noSpeechHint() {
   return "المتصفح ما يدعم التعرف على الصوت. استخدم Chrome";
 }
 function startMic() {
+  if (S.engine === "native") return startNative();
   if (S.engine === "azure") return startAzure();
   if (S.engine === "server") return startServer();
   if (!SR) { micStatus(noSpeechHint(), "hide"); return; }
@@ -1059,9 +1062,53 @@ function startMic() {
 }
 function stopMic() {
   listening = false; try { rec && rec.stop(); } catch {}
-  stopAzure(); stopServer();
+  stopAzure(); stopServer(); stopNative();
   curIdx = -1; highlight(); micStatus("الصوت متوقف");
 }
+
+/* ---------- on-device engine (Android app: android/) ----------
+   window.QGNative is injected by the app. Audio capture, the Quran-tuned Whisper model and the
+   streaming commit policy all run on the device, with no network. Results come back through
+   window.QGN.onPartial / onFinal; the expected text around the cursor is sent as context. */
+const NATIVE = typeof window.QGNative !== "undefined";
+let nativeOn = false, nativeCtxKey = "", nativeWait = null;
+function nativeCtx(force) {
+  if (!NATIVE || !nativeOn) return;
+  const k = `${S.s}:${S.a}`; if (!force && k === nativeCtxKey) return; nativeCtxKey = k;
+  const vs = Q[S.s - 1][1];
+  const prev = S.a > 1 ? Engine.norm(vs[S.a - 2]) : (S.s > 1 && S.s !== 9 ? Engine.norm(Q[0][1][0]) : "");
+  try { QGNative.setContext(prev.slice(-200)); } catch {}
+}
+function startNative() {
+  if (!NATIVE) { micStatus("محرك الجهاز متاح في تطبيق الأندرويد فقط", "hide"); return; }
+  listening = true; if (!paused) resync();
+  const st = QGNative.status();
+  if (st === "loading") {
+    micStatus("جاري تحميل نموذج التعرف على الجهاز…");
+    clearTimeout(nativeWait); nativeWait = setTimeout(() => { if (listening && !nativeOn) startNative(); }, 500);
+    return;
+  }
+  if (st !== "ready") { listening = false; micStatus("تعذّر تحميل نموذج التعرف: " + st, "hide"); return; }
+  nativeOn = true; nativeCtxKey = ""; nativeCtx(true);
+  micStatus("جاري تشغيل المايك…");
+  QGNative.start();
+}
+function stopNative() {
+  clearTimeout(nativeWait);
+  if (!nativeOn) return;
+  nativeOn = false;
+  try { QGNative.stop(); } catch {}
+}
+window.QGN = {
+  onState(s) { if (s === "listening" && listening) micStatus("يستمع… (على الجهاز، بدون إنترنت)", "show"); },
+  onPartial(t) { if (listening && nativeOn) onHeard(finalBuf + " " + t, false, t); },
+  onFinal(t) {
+    if (!listening || !nativeOn) return;
+    finalBuf = (finalBuf + " " + t).trim().split(/\s+/).slice(-16).join(" ");
+    onHeard(finalBuf, true, t); nativeCtx();
+  },
+  onError(m) { listening = false; nativeOn = false; micStatus(m, "hide"); }
+};
 
 /* ---------- self-hosted engine: server/asr_server.py (Quran-tuned Whisper) ----------
    The mic is captured with an AudioWorklet, resampled to 16 kHz int16 and streamed over a
@@ -1395,6 +1442,25 @@ addEventListener("pagehide", () => { imu.close(); });
 
 window.QuranGlasses = {
   imu,
+  /* Android app: the device's own rotation sensor, as a quaternion [w, x, y, z] */
+  pushQuat(w, x, y, z) {
+    const first = !imu.nativeActive;
+    imu.nativeActive = true;
+    const s = { type: "pose", q: [w, x, y, z] };
+    imu.last = s; imu.frames++; imu.lastAt = Date.now();
+    imu.onPose?.(s);
+    if (first) hidStatus("connected");
+  },
+  /* Android app: hardware buttons (volume keys, media key, menu) */
+  key(name) {
+    if (pick !== null) { if (name === "next") movePick(1); else if (name === "prev") movePick(-1); else closePicker(name === "pause"); return; }
+    if (name === "next") page(1);
+    else if (name === "prev") page(-1);
+    else if (name === "pause") togglePause();
+    else if (name === "mic") toggleMic();
+    else if (name === "settings") toggleFocus();
+    else if (name === "surahs") openPicker();
+  },
   pushPose({ pitch: p }) { if (typeof p === "number" && isFinite(p)) onPitch(p, "حساس النظارة"); },
   next: () => page(1), prev: () => page(-1),
   goto(s, a = 1) { S.s = s; S.a = a; S.w = 0; resync(); render(); },
@@ -1500,7 +1566,7 @@ $("cExit").onclick = () => toggleFocus();
 $("cList").onclick = () => { $("corner").hidden = true; openPicker(); };
 $("cMic").onclick = () => { toggleMic(); showCorner(); };
 
-if ("serviceWorker" in navigator && location.protocol === "https:" && !location.hostname.endsWith("claude.ai")) {
+if ("serviceWorker" in navigator && location.protocol === "https:" && !location.hostname.endsWith("claude.ai") && typeof window.QGNative === "undefined") {
   navigator.serviceWorker.register("sw.js").catch(() => {});
 }
 $("stage").ondblclick = e => { if (!e.target.closest(".ay") && document.body.classList.contains("focus-mode")) toggleFocus(); };
@@ -1534,6 +1600,14 @@ document.addEventListener("keydown", e => {
 
 $("sim").value = S.base;
 applyLook(); resync(); render(); onPitch(S.base, "محاكاة"); micStatus("الصوت متوقف");
+if (NATIVE) {
+  $("engNative").hidden = false;
+  if (S.engine === "browser") S.engine = "native";              // the browser engine does not exist in a WebView
+  $("hid").hidden = true; $("hidst").textContent = "حساس الجهاز يتصل تلقائيًا";
+  applyLook();
+  document.body.classList.add("focus-mode"); applyHide();
+  if (S.engine === "native" && S.autoListen !== false) setTimeout(() => { if (!listening) startMic(); }, 300);
+}
 $("diag").textContent = `تشخيص: ${IOS ? "iOS" : /Android/.test(UA) ? "Android" : "كمبيوتر"} · ${STANDALONE ? "تطبيق مثبّت" : "متصفح"} · التعرف على الصوت: ${SR ? "متاح" : "غير متاح"} · WebHID: ${VitureIMU.supported() ? "متاح" : "غير متاح"} · ${location.protocol}`;
 </script>
 

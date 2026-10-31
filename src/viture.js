@@ -145,8 +145,8 @@ const VitureIMU = (() => {
   class Session {
     constructor() { this.devices = []; this.gen = null; this.frames = 0; this.onPose = null; this.onStatus = null; this.lastAt = 0; }
     status(s) { this.onStatus?.(s); }
-    get connected() { return this.devices.some(d => d.opened); }
-    get name() { const d = this.devices[0]; return d ? `${NAMES[d.productId] || d.productName || "VITURE"} · ${d.productId.toString(16)} · Gen${this.gen}` : ""; }
+    get connected() { return !!this.nativeActive || this.devices.some(d => d.opened); }
+    get name() { if (this.nativeActive) return "حساس الجهاز"; const d = this.devices[0]; return d ? `${NAMES[d.productId] || d.productName || "VITURE"} · ${d.productId.toString(16)} · Gen${this.gen}` : ""; }
 
     // Prompts the chooser (needs a user gesture). Afterwards reconnect() works silently on reload.
     async connect() {

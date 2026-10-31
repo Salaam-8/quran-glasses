@@ -1,3 +1,9 @@
 node_modules/
 __pycache__/
 *.zip
+android/third_party/
+android/build-assets/
+android/**/.gradle/
+android/**/.kotlin/
+android/**/build/
+android/local.properties
