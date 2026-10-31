@@ -20,7 +20,7 @@ tests/test_engine.js  56 matcher tests against the real text (node, no deps)
 tests/test_viture.js  45 IMU driver tests: byte-exact frames, quaternion → head angle (node, no deps)
 tests/test_server.py  21 checks of the self-hosted ASR server's streaming policy and protocol (python, numpy + websockets)
 server/               self-hosted Quran ASR server (faster-whisper + websockets), Docker + Caddy, Oracle setup guide
-tests/test_browser.js 64 end-to-end tests, desktop + emulated phone (needs playwright)
+tests/test_browser.js 80 end-to-end tests (16 for the Android bridge with a fake QGNative), desktop + emulated phone (needs playwright)
 dist/                 build output (committed so GitHub Pages can serve dist/app)
 ```
 
@@ -63,9 +63,50 @@ Outputs:
 
 ---
 
+## Android app (android/, started 2026-10-31)
+
+Fully offline app for standalone Android glasses (and Android phones for testing). It requests **no INTERNET
+permission**.
+
+```
+android/
+  core/                 pure Kotlin/JVM (composite build): StreamingSession = server/asr_server.py's policy
+                        (LocalAgreement-2, 1 s step, 8 s buffer, 1.2 s pause flush, adaptive silence floor),
+                        ArabicNorm, NativeWords parser. 9 JUnit tests: `cd android && ./gradlew -p core test`
+                        (runs without the Android SDK).
+  app/src/main/cpp/     qg_whisper.{h,cpp}: whisper.cpp wrapper (ar, greedy, no fallback, word timestamps via
+                        max_len=1 + split_on_word, audio_ctx sized to the buffer); jni.cpp; CMakeLists (static
+                        whisper.cpp v1.9.5 from android/third_party, fetched by scripts/fetch-whisper.sh).
+  app/src/main/kotlin/  MainActivity (WebView over https://appassets.androidplatform.net/assets/web/index.html,
+                        immersive, keep-screen-on, hardware keys), NativeBridge (window.QGNative), RecitationListener
+                        (AudioRecord VOICE_RECOGNITION 16 kHz + NoiseSuppressor/AGC; capture and decode threads),
+                        ModelStore (copies assets/models/*.bin to app storage once), PoseSource
+                        (GAME_ROTATION_VECTOR quaternion -> QuranGlasses.pushQuat).
+  app/src/androidTest/  AppTest: page loads offline with the bridge, model loads and decodes (selfTest), volume /
+                        media keys, device sensor. Runs on an API 34 x86_64 emulator in CI.
+  scripts/              fetch-whisper.sh, build-models.sh (HF tarteel-ai/whisper-{base,tiny}-ar-quran ->
+                        convert-h5-to-ggml.py -> whisper-quantize q5_1 / q8_0 -> build-assets/models), ci-run.sh
+                        (turns failures into check-run annotations, readable via the API).
+```
+
+- **The UI is the same web page** (`dist/android/web/index.html`, built by build.py without the Google Fonts links).
+  Inside the app (`window.QGNative` present) it switches to the «على الجهاز» engine, starts in glasses mode and
+  starts listening once the model is loaded. Bridge: `QGNative.status/start/stop/setContext/setModel/info/selfTest`;
+  results back through `window.QGN.onPartial/onFinal/onState/onError`; sensor through `QuranGlasses.pushQuat`
+  (counts as a connected sensor, so teach-in and posture work unchanged); keys through `QuranGlasses.key`.
+- **Buttons:** volume down / Page Down / media next = next page; volume up / Page Up / media previous = previous;
+  play-pause or headset button = pause / resume tracking; Menu = settings. D-pad and keyboard reach the page as before.
+- **Build:** the Android SDK cannot be downloaded in Claude's sandbox, so the APK is built by
+  `.github/workflows/android.yml` (models cached by script hash), which publishes it as the `android-latest`
+  pre-release. Local: `python3 build.py && android/scripts/fetch-whisper.sh && android/scripts/build-models.sh &&
+  cd android && ./gradlew :app:assembleRelease` (release is signed with the debug key for sideloading).
+- **Not yet known:** real-time factor of whisper-base on the target glasses' SoC (step 1 s, buffer 8 s), and
+  recognition accuracy offline vs Google. Knobs: model (`QGNative.setModel("ggml-quran-tiny.bin")`), `step`,
+  `maxBuffer` in StreamingSession, `audio_ctx` in qg_whisper.cpp.
+
 ## Not done / open items (priority order)
 
-1. ~~Host the PWA on GitHub Pages.~~ **Done (2026-10-29).** Private repo `Salaam-8/quran-glasses`, published by `.github/workflows/pages.yml` (Pages source = GitHub Actions) on every push to `main`. Live: https://salaam-8.github.io/quran-glasses/ ; manifest and sw.js verified 200 in Chrome. Bump `CACHE` in `build.py` on every deploy (now v21).
+1. ~~Host the PWA on GitHub Pages.~~ **Done (2026-10-29).** Private repo `Salaam-8/quran-glasses`, published by `.github/workflows/pages.yml` (Pages source = GitHub Actions) on every push to `main`. Live: https://salaam-8.github.io/quran-glasses/ ; manifest and sw.js verified 200 in Chrome. Bump `CACHE` in `build.py` on every deploy (now v22).
 2. **Glasses IMU: implemented, needs a real-device check.** `src/viture.js` talks to the glasses over WebHID
    without the vendor SDK (its browser build has no public download). Protocol sources:
    - Gen2 / Pro 2 (`35CA:1301`): https://github.com/elasticjava/viture-v2/blob/main/PROTOCOL.md — one HID interface,
@@ -145,13 +186,11 @@ Outputs:
 - Phase 1: native Android app (Kotlin; matcher in C++ via NDK; R8 obfuscation) for existing glasses.
 - Phase 2: glasses + activation code bundle.
 - Phase 3: own-brand glasses via a white-label manufacturer, preferably with waveguide optics.
-  - **Decided 2026-10-31: the product is a standalone device.** Processor (Android SoC, e.g. Snapdragon AR1/AR1+),
-    battery, microphones, IMU and buttons are in the glasses and our software runs on them. The phone is used **only for
-    internet** (its Wi-Fi hotspot or Bluetooth tethering); no cable while worn. Consequences for the software: the
-    native Android app (Phase 1) must run on the glasses themselves, reading the IMU via the vendor SDK or Android
-    sensor API (not WebHID), the mics via the Android audio API, buttons as Android key events, and the device serial
-    via the SDK for licensing. Speech recognition goes over the phone's internet (cloud or our ASR server); on-device
-    recognition is a nice-to-have. The current tethered VITURE stays the development prototype.
+  - **Decided 2026-10-31: the product is a standalone, fully offline device.** Processor (Android SoC, e.g.
+    Snapdragon AR1/AR1+), battery, microphones, IMU and buttons are in the glasses and all of our software runs on them,
+    **including speech recognition**. No phone, no internet and no cable during use; Wi-Fi/Bluetooth only for setup and
+    updates. The hardware RFQ (kept outside this repo) asks for ≥ 4 GB RAM, ≥ 16 GB storage and a SoC that runs a
+    ~75 M-parameter speech model ≥ 2× real time. The current tethered VITURE stays the development prototype.
   - 2026-10-31: a neutral hardware RFQ («see-through wearable text display for hands-free reading in low-light indoor settings», no mention of the project or its use) was prepared for supplier outreach. By the owner's choice, manufacturer documents are kept outside this repository.
 - Closed source: a signed license (e.g. Ed25519) bound to the glasses' serial number, if the SDK exposes one; verified offline.
 - Before selling:
