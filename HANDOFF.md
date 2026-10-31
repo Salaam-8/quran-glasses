@@ -20,7 +20,7 @@ tests/test_engine.js  56 matcher tests against the real text (node, no deps)
 tests/test_viture.js  38 IMU driver tests: byte-exact frames, quaternion → head angle (node, no deps)
 tests/test_server.py  21 checks of the self-hosted ASR server's streaming policy and protocol (python, numpy + websockets)
 server/               self-hosted Quran ASR server (faster-whisper + websockets), Docker + Caddy, Oracle setup guide
-tests/test_browser.js 53 end-to-end tests, desktop + emulated phone (needs playwright)
+tests/test_browser.js 60 end-to-end tests, desktop + emulated phone (needs playwright)
 dist/                 build output (committed so GitHub Pages can serve dist/app)
 ```
 
@@ -43,7 +43,7 @@ Outputs:
 | Glasses mode | `G` key / button: hides UI, fullscreen, wake lock; phones lock landscape | browser test |
 | Voice tracking | Web Speech API (`ar-SA`, continuous, interim) or Azure Speech streaming (user's own key) → `Engine.locate()` | engine tests use typed text; Azure path mocked in browser test |
 | Ayah/word highlight | current ayah full brightness, others dimmed; current word green + underlined | browser test |
-| Auto page turn | when the recited ayah is the last one on the page, the page rebases to it | browser test |
+| Sliding window (2026-10-31) | replaces the old "rebase when the last ayah is reached", which was too late: readers stopped at the end of the page because the next words were not visible, and with no new speech the tracker froze. While following (`S.follow`), `windowOk(i)` holds two rules on every recognised word: (1) the current word's line starts in the upper half of the text area (`LIMIT_H / 2`, under the top limit); (2) the next ayah's first word is visible, or, for an ayah too long to share the window, its next line is. When a rule fails, `placeWindow(i)` restarts the window at the current ayah, steps through chunks of a long ayah, then if needed starts at the line holding the word. Following always shows ≥ 2 ayahs. Manual paging (← →) unchanged; tracking continues from the new page | browser tests: last visible ayah brings the next one in after 3 words; Ayat al-Kursi at 60 px always shows the next line, moves by lines |
 | Find position anywhere | recite from anywhere and the engine locates you. **Search scope** setting (2026-10-30): current surah (default, never leaves the surah except by «سورة …» or the picker), current + next, whole Quran. The whole-Quran best still vetoes in-scope echoes of common words. **Far-jump gate**: more than 10 ayahs away (or another surah) needs the same place in two consecutive finals (`Engine.jumpGate`); interim results never jump far. Jumps bigger than a page push the last 5 positions (`S.hist`) and show a 5 s toast with «رجوع» | engine + browser tests |
 | Voice command | «سورة الكهف» opens a surah (fuzzy name match; An-Nur 24:1 is not misread as a command). **Control words** (2026-10-30): «توقف/وقف» freezes tracking and saves (surah, ayah, word) in `S.saved`; «استمر/كمّل» returns there and continues, even after the page moved or reloaded; «ارجع» undoes the last jump (`S.hist`). Recognised only as the first word of a ≤ 4-word utterance and only when the phrase is not the next words of the text (so 12:50 «ارجع إلى ربك» is recitation). Keyboard: `P` pause/resume, `Backspace` back | tests |
 | Surah picker in glasses | `S` / `.` / `B` opens it; full list of 114 scrolls by touch or wheel-free keyboard; search box filters by name or number; arrows / PageUp / PageDown move; digits jump; Enter opens | browser test |
@@ -65,7 +65,7 @@ Outputs:
 
 ## Not done / open items (priority order)
 
-1. ~~Host the PWA on GitHub Pages.~~ **Done (2026-10-29).** Private repo `Salaam-8/quran-glasses`, published by `.github/workflows/pages.yml` (Pages source = GitHub Actions) on every push to `main`. Live: https://salaam-8.github.io/quran-glasses/ ; manifest and sw.js verified 200 in Chrome. Bump `CACHE` in `build.py` on every deploy (now v19).
+1. ~~Host the PWA on GitHub Pages.~~ **Done (2026-10-29).** Private repo `Salaam-8/quran-glasses`, published by `.github/workflows/pages.yml` (Pages source = GitHub Actions) on every push to `main`. Live: https://salaam-8.github.io/quran-glasses/ ; manifest and sw.js verified 200 in Chrome. Bump `CACHE` in `build.py` on every deploy (now v20).
 2. **Glasses IMU: implemented, needs a real-device check.** `src/viture.js` talks to the glasses over WebHID
    without the vendor SDK (its browser build has no public download). Protocol sources:
    - Gen2 / Pro 2 (`35CA:1301`): https://github.com/elasticjava/viture-v2/blob/main/PROTOCOL.md — one HID interface,
@@ -136,6 +136,7 @@ Outputs:
 - Phase 1: native Android app (Kotlin; matcher in C++ via NDK; R8 obfuscation) for existing glasses.
 - Phase 2: glasses + activation code bundle.
 - Phase 3: own-brand glasses via a white-label manufacturer, preferably with waveguide optics.
+  - 2026-10-31: a neutral hardware RFQ («see-through wearable text display for hands-free reading in low-light indoor settings», no mention of the project or its use) was prepared for supplier outreach. By the owner's choice, manufacturer documents are kept outside this repository.
 - Closed source: a signed license (e.g. Ed25519) bound to the glasses' serial number, if the SDK exposes one; verified offline.
 - Before selling:
   - Confirm the Quran-text licensing.
