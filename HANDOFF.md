@@ -145,6 +145,13 @@ Outputs:
 - Phase 1: native Android app (Kotlin; matcher in C++ via NDK; R8 obfuscation) for existing glasses.
 - Phase 2: glasses + activation code bundle.
 - Phase 3: own-brand glasses via a white-label manufacturer, preferably with waveguide optics.
+  - **Decided 2026-10-31: the product is a standalone device.** Processor (Android SoC, e.g. Snapdragon AR1/AR1+),
+    battery, microphones, IMU and buttons are in the glasses and our software runs on them. The phone is used **only for
+    internet** (its Wi-Fi hotspot or Bluetooth tethering); no cable while worn. Consequences for the software: the
+    native Android app (Phase 1) must run on the glasses themselves, reading the IMU via the vendor SDK or Android
+    sensor API (not WebHID), the mics via the Android audio API, buttons as Android key events, and the device serial
+    via the SDK for licensing. Speech recognition goes over the phone's internet (cloud or our ASR server); on-device
+    recognition is a nice-to-have. The current tethered VITURE stays the development prototype.
   - 2026-10-31: a neutral hardware RFQ («see-through wearable text display for hands-free reading in low-light indoor settings», no mention of the project or its use) was prepared for supplier outreach. By the owner's choice, manufacturer documents are kept outside this repository.
 - Closed source: a signed license (e.g. Ed25519) bound to the glasses' serial number, if the SDK exposes one; verified offline.
 - Before selling:
