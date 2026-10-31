@@ -45,8 +45,8 @@ class RecitationListener(
                 AudioFormat.ENCODING_PCM_16BIT, maxOf(min, rate * 2 / 5))
         } catch (e: Exception) { onError("تعذّر فتح المايك: ${e.message}"); return false }
         if (rec.state != AudioRecord.STATE_INITIALIZED) { rec.release(); onError("تعذّر فتح المايك"); return false }
-        if (NoiseSuppressor.isAvailable()) NoiseSuppressor.create(rec.audioSessionId)?.let { it.enabled = true; effects += it }
-        if (AutomaticGainControl.isAvailable()) AutomaticGainControl.create(rec.audioSessionId)?.let { it.enabled = true; effects += it }
+        if (NoiseSuppressor.isAvailable()) NoiseSuppressor.create(rec.audioSessionId)?.let { it.setEnabled(true); effects += it }
+        if (AutomaticGainControl.isAvailable()) AutomaticGainControl.create(rec.audioSessionId)?.let { it.setEnabled(true); effects += it }
         record = rec
         running = true
         rec.startRecording()
