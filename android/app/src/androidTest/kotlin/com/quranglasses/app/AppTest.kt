@@ -69,6 +69,16 @@ class AppTest {
         waitFor(5_000, "pause") { js("paused") == "true" }
     }
 
+    @Test fun subscriptionUsesTheDeviceId() {
+        waitFor(30_000, "page load") { activity().pageLoaded }
+        waitFor(10_000, "QuranGlasses") { js("typeof QuranGlasses") == "\"object\"" }
+        val id = activity().bridge.deviceId()
+        assertTrue("device id $id", Regex("[A-Z2-9]{10}").matches(id))
+        assertEquals("\"${id.substring(0, 4)}-${id.substring(4, 8)}-${id.substring(8)}\"", js("document.getElementById('devId').textContent"))
+        assertEquals(id, activity().bridge.deviceId())                  // stable
+        assertEquals("false", js("QuranGlasses.entitled('tafsir')"))   // no code yet
+    }
+
     @Test fun deviceSensorReachesThePage() {
         waitFor(30_000, "page load") { activity().pageLoaded }
         waitFor(10_000, "QuranGlasses") { js("typeof QuranGlasses") == "\"object\"" }

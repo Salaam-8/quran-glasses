@@ -1,5 +1,6 @@
 package com.quranglasses.app
 
+import android.provider.Settings
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import com.quranglasses.app.asr.RecitationListener
@@ -7,6 +8,7 @@ import com.quranglasses.app.asr.WhisperNative
 import com.quranglasses.app.asr.WhisperTranscriber
 import com.quranglasses.core.AsrEvent
 import org.json.JSONObject
+import java.security.MessageDigest
 import java.util.concurrent.Executors
 import kotlin.math.PI
 import kotlin.math.sin
@@ -47,6 +49,18 @@ class NativeBridge(private val activity: MainActivity, private val web: WebView)
     }
 
     @JavascriptInterface fun available(): Boolean = true
+
+    /**
+     * Device ID for subscription codes: 10 base32 characters derived from ANDROID_ID (stable per device and
+     * signing key, survives app updates; changes on factory reset). Replace with the glasses' hardware serial
+     * from the vendor SDK once available.
+     */
+    @JavascriptInterface fun deviceId(): String {
+        val raw = Settings.Secure.getString(activity.contentResolver, Settings.Secure.ANDROID_ID) ?: return ""
+        val h = MessageDigest.getInstance("SHA-256").digest("quran-glasses:$raw".toByteArray())
+        val alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+        return (0 until 10).map { alphabet[(h[it].toInt() and 0xff) % 32] }.joinToString("")
+    }
     @JavascriptInterface fun status(): String = status
 
     @JavascriptInterface fun info(): String = JSONObject()

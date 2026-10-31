@@ -17,10 +17,11 @@ data/quran.json       Uthmani text, 114 surahs / 6236 ayahs (npm quran-json@3.1.
 assets/               Amiri Quran woff2 (SIL OFL), app icons, vendored Azure Speech SDK (MIT)
 build.py              builds dist/ (standard library only)
 tests/test_engine.js  56 matcher tests against the real text (node, no deps)
+tests/test_license.js 20 offline subscription code tests (node, no deps)
 tests/test_viture.js  45 IMU driver tests: byte-exact frames, quaternion → head angle (node, no deps)
 tests/test_server.py  21 checks of the self-hosted ASR server's streaming policy and protocol (python, numpy + websockets)
 server/               self-hosted Quran ASR server (faster-whisper + websockets), Docker + Caddy, Oracle setup guide
-tests/test_browser.js 80 end-to-end tests (16 for the Android bridge with a fake QGNative), desktop + emulated phone (needs playwright)
+tests/test_browser.js 88 end-to-end tests (16 for the Android bridge with a fake QGNative), desktop + emulated phone (needs playwright)
 dist/                 build output (committed so GitHub Pages can serve dist/app)
 ```
 
@@ -62,6 +63,35 @@ Outputs:
 - A whole-Quran search takes about 65 ms.
 
 ---
+
+## Subscriptions and paid add-ons (2026-10-31)
+
+Owner's decision: **monthly or yearly subscription**; paid add-ons = recitation error alerts (`errors`),
+tafsir and other qira'at (`tafsir`), memorization tracking and review (`hifz`). **The add-on features themselves are
+not built yet** (exact scope to be decided); only the subscription system and the gate they will call.
+
+- **Offline check, because the glasses have no internet.** A subscription code is `QG1.<payload>.<sig>`: base64url
+  JSON `{v, d: deviceId, p: plan, f: [add-ons], i: issued, e: expires, n: id}` signed with Ed25519 by the owner's
+  private key. The page verifies it with the public key from `license/public_key.txt` (inlined by build.py) using
+  tweetnacl 1.0.3 (public domain, vendored as `assets/tweetnacl-1.0.3.min.js`). Logic in `src/license.js`.
+- **Bound to one device:** the code carries the device ID shown in the settings row («معرّف الجهاز», XXXX-XXXX-XX).
+  Web: random per browser (`S.devId`). Android: SHA-256 of ANDROID_ID (`QGNative.deviceId()`); switch to the glasses'
+  hardware serial from the vendor SDK when available (RFQ item F1).
+- **Clock tampering:** the highest time ever seen (`S.licSeen`) is stored; a clock more than 1 day behind it voids
+  the code until fixed. 3-day grace after expiry with a warning.
+- **Gate for features:** `requireAddon("errors"|"tafsir"|"hifz")` (toast if locked) / `QuranGlasses.entitled(key)`.
+- **Issuing codes (owner):** `node tools/license.js issue --device XXXX-XXXX-XX --plan monthly|yearly|trial
+  [--addons errors,tafsir,hifz]`; `keygen` creates the real key pair. **The committed key pair is a development
+  key** (`tools/dev-license-key.json`): build.py warns while it is in use; replace it before selling
+  (`license/README.md`).
+- **Not built:** payment collection and automatic code delivery (e.g. a Saudi payment gateway such as Moyasar or Tap
+  calling a small endpoint on the ASR server to issue codes), and getting a code onto glasses with no keyboard
+  (options: paste on a phone build, QR or Bluetooth from a companion app, or Wi-Fi activation during setup).
+  Monthly renewals on an offline device mean a new code every month; yearly is the smoother default.
+- Security note: like any client-side check, a determined attacker can patch the APK; signing makes codes
+  unforgeable, not the app untamperable (see "Closed source" below).
+- Tests: `tests/test_license.js` (20: valid, grace, expired, other device, edited code, other key, clock rollback,
+  tool-issued code), 8 browser tests for the settings row, 1 instrumentation test for the Android device ID.
 
 ## Android app (android/, started 2026-10-31)
 
@@ -118,7 +148,7 @@ android/
 
 ## Not done / open items (priority order)
 
-1. ~~Host the PWA on GitHub Pages.~~ **Done (2026-10-29).** Private repo `Salaam-8/quran-glasses`, published by `.github/workflows/pages.yml` (Pages source = GitHub Actions) on every push to `main`. Live: https://salaam-8.github.io/quran-glasses/ ; manifest and sw.js verified 200 in Chrome. Bump `CACHE` in `build.py` on every deploy (now v22).
+1. ~~Host the PWA on GitHub Pages.~~ **Done (2026-10-29).** Private repo `Salaam-8/quran-glasses`, published by `.github/workflows/pages.yml` (Pages source = GitHub Actions) on every push to `main`. Live: https://salaam-8.github.io/quran-glasses/ ; manifest and sw.js verified 200 in Chrome. Bump `CACHE` in `build.py` on every deploy (now v23).
 2. **Glasses IMU: implemented, needs a real-device check.** `src/viture.js` talks to the glasses over WebHID
    without the vendor SDK (its browser build has no public download). Protocol sources:
    - Gen2 / Pro 2 (`35CA:1301`): https://github.com/elasticjava/viture-v2/blob/main/PROTOCOL.md — one HID interface,

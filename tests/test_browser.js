@@ -2,6 +2,12 @@
 // Run after `py build.py`:  node tests/test_browser.js
 const { chromium, devices } = require("playwright");
 const { WebSocketServer } = require("ws");
+const License = require("../src/license.js");
+const DEV_KEY = require("../tools/dev-license-key.json");
+const issue = (device, plan, addons, days) => {
+  const now = Math.floor(Date.now() / 1000);
+  return License.sign({ v: 1, d: License.formatId(device), p: plan, f: addons, i: now, e: now + days * 86400, n: "t" }, DEV_KEY.secretKey);
+};
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
@@ -241,6 +247,20 @@ const t = (name, got, want) => {
     t("gen1: qiyam shows, ruku and sujood hide", [g1.qiyam, g1.ruku, g1.sujood[0]], [false, true, true]);
     t("gen1: sujood reads past -90°", g1.sujood[1], "-120°");
     t("gen1: qiyam calibration works with Euler glasses", g1.back, false);
+    // subscription: offline code bound to this device unlocks the paid add-ons
+    const devId = await p.textContent("#devId");
+    t("subscription: device id shown", /^[A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]{2}$/.test(devId), true);
+    t("subscription: none at first, add-ons locked", [await p.textContent("#subState"), (await p.textContent("#subAddons")).includes("مفعّلة")], ["بلا اشتراك", false]);
+    t("subscription: locked add-on refuses", await p.evaluate(() => QuranGlasses.requireAddon("tafsir")), false);
+    await p.fill("#subCode", issue("ZZZZ-ZZZZ-ZZ", "yearly", ["errors"], 365)); await p.click("#subApply");
+    t("subscription: code for another device refused", [await p.textContent("#toast"), await p.textContent("#subState")], ["هذا الرمز لجهاز آخر. أرسل معرّف هذا الجهاز للحصول على رمز له", "بلا اشتراك"]);
+    await p.fill("#subCode", issue(devId, "yearly", ["errors", "hifz"], 365)); await p.click("#subApply");
+    t("subscription: valid code activates", (await p.textContent("#subState")).startsWith("اشتراك سنوي · حتى"), true);
+    t("subscription: only the bought add-ons open", await p.evaluate(() => ["errors", "tafsir", "hifz"].map(a => QuranGlasses.entitled(a))), [true, false, true]);
+    await p.reload(); await p.waitForTimeout(400);
+    t("subscription: kept after reload", [(await p.textContent("#subState")).startsWith("اشتراك سنوي"), await p.textContent("#devId")], [true, devId]);
+    t("subscription: clock turned back is caught", await p.evaluate(() => { S.licSeen = Math.floor(Date.now() / 1000) + 30 * 86400; checkSub(); return [document.getElementById("subState").textContent, QuranGlasses.entitled("errors")]; }), ["الاشتراك غير صالح", false]);
+    await p.evaluate(() => { S.licSeen = 0; S.lic = null; save(); checkSub(); S.top = 90; applyLook(); });
     t("no page errors", errs.length, 0);
     await p.close();
   }

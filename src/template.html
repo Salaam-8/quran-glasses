@@ -86,7 +86,7 @@ details.api pre {
   position: absolute; left: 0; right: 0; bottom: var(--offset, 8%);
   margin-inline: auto; width: min(92%, 62em);
   padding-inline: max(16px, env(safe-area-inset-left, 0px));
-  font-family: var(--f-quran); color: var(--verse); font-size: var(--size, 34px);
+  font-family: var(--f-quran); color: var(--verse); font-size: calc(var(--size, 34px) * var(--fit, 1));
   line-height: 2.1; text-align: justify; text-align-last: center; direction: rtl;
   opacity: var(--glow, 1); transition: opacity .25s ease;
 }
@@ -121,7 +121,7 @@ body.sim-src .toplimit { display: block; }
   font-family: var(--f-ui); font-size: 22px; color: var(--accent); white-space: nowrap;
   opacity: 0; transition: opacity .3s ease; pointer-events: none;
 }
-.toast.on { opacity: 1; pointer-events: auto; }
+.toast.on { opacity: 1; pointer-events: auto; z-index: 20; }   /* above the text, so «رجوع» stays clickable */
 .toast .btn { margin-inline-start: 10px; padding: 2px 10px; font-size: .9em; color: var(--accent); border-color: var(--accent); }
 
 /* surah picker, readable inside the glasses */
@@ -254,6 +254,14 @@ body.sim-src .toplimit { display: block; }
     <span class="f num" id="angles" style="min-width:0"></span>
   </div>
 
+  <div class="row sep" id="subRow">
+    <span class="chip" id="subState">بلا اشتراك</span>
+    <span class="f">معرّف الجهاز <span class="num" id="devId" style="min-width:0"></span></span>
+    <input id="subCode" type="text" autocomplete="off" spellcheck="false" placeholder="الصق رمز الاشتراك هنا" style="width:220px;direction:ltr">
+    <button class="btn" id="subApply">تفعيل</button>
+    <span class="f" id="subAddons"></span>
+  </div>
+
   <details class="api">
     <summary>الاختصارات وربط حساس النظارة</summary>
     <pre>←  مسافة  PageDown     الصفحة التالية
@@ -303,6 +311,12 @@ window.QuranGlasses.pushPose({ pitch: -18.4 });
 </script>
 <script>
 /*VITURE*/
+</script>
+<script>
+/*NACL*/
+</script>
+<script>
+/*LICENSE*/
 </script>
 <script>
 const Q = /*QURAN_DATA*/[];
@@ -374,6 +388,9 @@ function render() {
     html += `<span class="ay" data-a="${a}">${from ? '<span class="cont">…</span> ' : ""}${words}&nbsp;<span class="mark" data-a="${a}">﴿${AR(a)}﴾</span></span> `;
   }
   const box = $("text"); box.innerHTML = html;
+  document.documentElement.style.setProperty("--fit", 1);
+  // the heading takes a line too: give it its (provisional) text before measuring, or the cut lands too low
+  $("phead").textContent = `سورة ${name} · الآيات ${AR(S.a)}–${AR(last)} من ${AR(total)}`;
   // cut by rendered lines: the first token whose line crosses the limit starts the next page
   const limit = LIMIT_H = $("stage").clientHeight * (S.top - S.offset) / 100 - 4;
   PE = { a: last + 1, w: 0 };
@@ -394,6 +411,8 @@ function render() {
       box.innerHTML = box.innerHTML.replace(/(\s|&nbsp;)+(<\/span>)/g, "$2");
     }
   }
+  // even a single line is taller than the space under the limit: shrink just enough, never cross the line
+  if (box.scrollHeight > limit && limit > 0) document.documentElement.style.setProperty("--fit", Math.max(0.4, limit / box.scrollHeight).toFixed(3));
   const endA = pageEnd(), partial = PE.w !== 0;
   $("phead").textContent = `سورة ${name} · الآيات ${AR(S.a)}–${AR(Math.max(S.a, endA))}${partial ? "…" : ""} من ${AR(total)}`;
   surahSel.value = S.s; $("ayah").value = S.a; $("ayah").max = total;
@@ -1023,8 +1042,48 @@ if (VitureIMU.supported()) imu.reconnect().catch(() => {});
 else { $("hid").disabled = true; $("hidst").textContent = "WebHID يحتاج Chrome على الكمبيوتر"; }
 addEventListener("pagehide", () => { imu.close(); });
 
+/* ---------- subscription and paid add-ons (src/license.js) ----------
+   The code is checked offline against the public key built into the page. Add-on features call
+   requireAddon("errors" | "tafsir" | "hifz") before they run. */
+const LICENSE_PUBKEY = "/*LICENSE_PUBKEY*/";
+let sub = null;
+function deviceId() {
+  if (NATIVE) { try { const id = QGNative.deviceId(); if (id) return License.formatId(id); } catch {} }
+  if (!S.devId) { S.devId = License.randomId(); save(); }
+  return S.devId;
+}
+const fmtDate = s => { const d = new Date(s * 1000); return AR(`${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}`); };
+function checkSub() {
+  sub = S.lic ? License.check(S.lic, { publicKeyHex: LICENSE_PUBKEY, deviceId: deviceId(), maxSeen: S.licSeen || 0 }) : null;
+  if (sub && sub.maxSeen > (S.licSeen || 0)) { S.licSeen = sub.maxSeen; save(); }
+  const st = $("subState");
+  if (!sub) { st.className = "chip"; st.textContent = "بلا اشتراك"; }
+  else if (!sub.ok) { st.className = "chip hide"; st.textContent = sub.reason === "expired" ? "انتهى الاشتراك" : "الاشتراك غير صالح"; st.title = License.REASONS[sub.reason]; }
+  else if (sub.inGrace) { st.className = "chip hide"; st.textContent = `انتهى الاشتراك · مهلة ${AR(License.GRACE_DAYS + sub.daysLeft)} أيام`; }
+  else { st.className = "chip show"; st.textContent = `اشتراك ${License.PLANS[sub.plan] || sub.plan} · حتى ${fmtDate(sub.expires)}`; }
+  $("devId").textContent = deviceId();
+  $("subAddons").textContent = Object.entries(License.ADDONS).map(([k, name]) => `${name}: ${License.has(sub, k) ? "مفعّلة" : "مقفلة"}`).join(" · ");
+}
+const entitled = addon => License.has(sub, addon);
+function requireAddon(addon) {
+  if (entitled(addon)) return true;
+  toast(`«${License.ADDONS[addon]}» من إضافات الاشتراك`, 4000);
+  return false;
+}
+$("subApply").onclick = () => {
+  const code = $("subCode").value.trim();
+  const r = License.check(code, { publicKeyHex: LICENSE_PUBKEY, deviceId: deviceId(), maxSeen: S.licSeen || 0 });
+  if (!r.ok) { toast(License.REASONS[r.reason], 6000); return; }
+  S.lic = code.replace(/\s+/g, ""); S.licSeen = r.maxSeen; save();
+  $("subCode").value = ""; checkSub();
+  toast(`تم تفعيل الاشتراك ${License.PLANS[r.plan] || ""} حتى ${fmtDate(r.expires)}`, 4000);
+};
+setInterval(checkSub, 3600 * 1000);
+
 window.QuranGlasses = {
   imu,
+  entitled, requireAddon,
+  subscription: () => sub,
   /* Android app: the device's own rotation sensor, as a quaternion [w, x, y, z] */
   pushQuat(w, x, y, z) {
     const first = !imu.nativeActive;
@@ -1191,5 +1250,6 @@ if (NATIVE) {
   document.body.classList.add("focus-mode"); applyHide();
   if (S.engine === "native" && S.autoListen !== false) setTimeout(() => { if (!listening) startMic(); }, 300);
 }
+checkSub();
 $("diag").textContent = `تشخيص: ${IOS ? "iOS" : /Android/.test(UA) ? "Android" : "كمبيوتر"} · ${STANDALONE ? "تطبيق مثبّت" : "متصفح"} · التعرف على الصوت: ${SR ? "متاح" : "غير متاح"} · WebHID: ${VitureIMU.supported() ? "متاح" : "غير متاح"} · ${location.protocol}`;
 </script>

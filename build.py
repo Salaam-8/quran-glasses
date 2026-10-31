@@ -29,12 +29,23 @@ def build_single_file() -> str:
         'if (typeof module !== "undefined") module.exports = Engine;', "")
     viture = (SRC / "viture.js").read_text(encoding="utf-8").replace(
         'if (typeof module !== "undefined") module.exports = VitureIMU;', "")
+    license_js = (SRC / "license.js").read_text(encoding="utf-8").replace(
+        'if (typeof module !== "undefined") module.exports = License;', "")
+    nacl = (ASSETS / "tweetnacl-1.0.3.min.js").read_text(encoding="utf-8")
+    pubkey = (ROOT / "license" / "public_key.txt").read_text(encoding="utf-8").strip()
+    assert re.fullmatch(r"[0-9a-f]{64}", pubkey), "license/public_key.txt must hold a 32-byte hex Ed25519 public key"
+    dev_key = ROOT / "tools" / "dev-license-key.json"
+    if dev_key.exists() and json.loads(dev_key.read_text())["publicKey"] == pubkey:
+        print("WARNING: building with the DEVELOPMENT subscription key (see license/README.md)")
     t = (SRC / "template.html").read_text(encoding="utf-8")
-    for ph in ("/*ENGINE*/", "/*VITURE*/", "/*QURAN_DATA*/[]", "/*FONT_B64*/"):
+    for ph in ("/*ENGINE*/", "/*VITURE*/", "/*NACL*/", "/*LICENSE*/", "/*LICENSE_PUBKEY*/", "/*QURAN_DATA*/[]", "/*FONT_B64*/"):
         assert ph in t, f"placeholder {ph} missing from template.html"
     return (t.replace("/*FONT_B64*/", font)
              .replace("/*ENGINE*/", engine)
              .replace("/*VITURE*/", viture)
+             .replace("/*NACL*/", nacl)
+             .replace("/*LICENSE*/", license_js)
+             .replace("/*LICENSE_PUBKEY*/", pubkey)
              .replace("/*QURAN_DATA*/[]", json.dumps(data, ensure_ascii=False, separators=(",", ":"))))
 
 
@@ -67,7 +78,7 @@ MANIFEST = {
 }
 
 # Bump CACHE whenever you deploy so phones pick up the new version.
-SERVICE_WORKER = """const CACHE = "quran-glasses-v22";
+SERVICE_WORKER = """const CACHE = "quran-glasses-v23";
 const FILES = ["./", "index.html", "manifest.webmanifest", "icon-192.png", "icon-512.png"];
 self.addEventListener("install", e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES))); self.skipWaiting(); });
 self.addEventListener("activate", e => {
