@@ -26,11 +26,19 @@ class NativeBridge(private val activity: MainActivity, private val web: WebView)
         status = "loading"
         worker.execute {
             status = try {
-                val name = ModelStore.pick(activity, wanted) ?: throw IllegalStateException("لا يوجد نموذج تعرف داخل التطبيق")
-                val file = ModelStore.ensure(activity, name)
+                val all = ModelStore.available(activity)
+                if (all.isEmpty()) throw IllegalStateException("لا يوجد نموذج تعرف داخل التطبيق")
+                val order = listOfNotNull(wanted?.takeIf { it in all }) + all.filter { it != wanted }
                 val threads = Runtime.getRuntime().availableProcessors().coerceIn(2, 4)
-                model?.close()
-                model = WhisperTranscriber.load(file.path, name, threads) ?: throw IllegalStateException("تعذّر تحميل $name")
+                model?.close(); model = null
+                val failures = mutableListOf<String>()
+                for (name in order) {                      // fall back to the next bundled model
+                    val file = ModelStore.ensure(activity, name)
+                    model = WhisperTranscriber.load(file.path, name, threads)
+                    if (model != null) break
+                    failures += "$name (${file.length()} bytes): " + WhisperNative.lastLog().lines().filter { it.isNotBlank() }.takeLast(4).joinToString(" | ")
+                }
+                if (model == null) throw IllegalStateException("تعذّر تحميل النموذج: " + failures.joinToString(" ; "))
                 "ready"
             } catch (e: Throwable) {
                 "error: ${e.message}"

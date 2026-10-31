@@ -65,6 +65,9 @@ jobs:
           path: android/build-assets/models
           key: models-${{ env.WHISPER_TAG }}-${{ hashFiles('android/scripts/build-models.sh') }}
 
+      - name: Verify models load in whisper.cpp
+        run: android/scripts/ci-run.sh android/scripts/verify-models.sh
+
       - name: Core tests (streaming policy)
         working-directory: android
         run: scripts/ci-run.sh ./gradlew -p core test --console=plain

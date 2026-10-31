@@ -10,6 +10,17 @@
 #define TAG "QgWhisper"
 
 namespace {
+std::mutex g_log_m;
+std::string g_log;                 // tail of the whisper.cpp / ggml log, for error messages
+
+void log_cb(enum ggml_log_level level, const char * text, void *) {
+    if (!text) return;
+    __android_log_print(level >= GGML_LOG_LEVEL_ERROR ? ANDROID_LOG_ERROR : ANDROID_LOG_INFO, TAG, "%s", text);
+    std::lock_guard<std::mutex> lock(g_log_m);
+    g_log += text;
+    if (g_log.size() > 4000) g_log.erase(0, g_log.size() - 4000);
+}
+
 struct Handle {
     QgWhisper w;
     std::mutex m;
@@ -25,6 +36,9 @@ std::string str(JNIEnv * env, jstring s) {
 
 extern "C" JNIEXPORT jlong JNICALL
 Java_com_quranglasses_app_asr_WhisperNative_init(JNIEnv * env, jclass, jstring path, jint threads) {
+    whisper_log_set(log_cb, nullptr);
+    ggml_log_set(log_cb, nullptr);
+    { std::lock_guard<std::mutex> lock(g_log_m); g_log.clear(); }
     auto h = std::make_unique<Handle>();
     if (!h->w.load(str(env, path), threads)) {
         __android_log_print(ANDROID_LOG_ERROR, TAG, "model load failed");
@@ -60,4 +74,10 @@ Java_com_quranglasses_app_asr_WhisperNative_free(JNIEnv *, jclass, jlong handle)
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_quranglasses_app_asr_WhisperNative_systemInfo(JNIEnv * env, jclass) {
     return env->NewStringUTF(whisper_print_system_info());
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_quranglasses_app_asr_WhisperNative_lastLog(JNIEnv * env, jclass) {
+    std::lock_guard<std::mutex> lock(g_log_m);
+    return env->NewStringUTF(g_log.c_str());
 }

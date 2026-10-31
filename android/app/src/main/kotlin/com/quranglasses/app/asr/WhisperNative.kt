@@ -12,6 +12,7 @@ object WhisperNative {
     @JvmStatic external fun transcribe(handle: Long, pcm: FloatArray, prompt: String, audioCtx: Int): String
     @JvmStatic external fun free(handle: Long)
     @JvmStatic external fun systemInfo(): String
+    @JvmStatic external fun lastLog(): String
 }
 
 /** The on-device Quran-tuned Whisper model as a [Transcriber] for the streaming session. */
