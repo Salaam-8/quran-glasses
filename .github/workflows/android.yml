@@ -28,7 +28,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
@@ -45,9 +45,9 @@ jobs:
       - name: whisper.cpp source
         run: android/scripts/ci-run.sh android/scripts/fetch-whisper.sh
 
-      - name: Cache speech models
+      - name: Restore speech models
         id: models
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: android/build-assets/models
           key: models-${{ env.WHISPER_TAG }}-${{ hashFiles('android/scripts/build-models.sh') }}
@@ -57,6 +57,13 @@ jobs:
         run: |
           pip install --quiet --extra-index-url https://download.pytorch.org/whl/cpu "torch>=2.2" "transformers>=4.40,<5" huggingface_hub numpy safetensors
           android/scripts/ci-run.sh android/scripts/build-models.sh
+
+      - name: Save speech models          # right away, so a later failure does not lose the 15-minute conversion
+        if: steps.models.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: android/build-assets/models
+          key: models-${{ env.WHISPER_TAG }}-${{ hashFiles('android/scripts/build-models.sh') }}
 
       - name: Core tests (streaming policy)
         working-directory: android

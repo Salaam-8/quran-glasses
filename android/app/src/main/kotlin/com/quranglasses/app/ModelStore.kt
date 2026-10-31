@@ -4,7 +4,7 @@ import android.content.Context
 import java.io.File
 
 /**
- * Speech models ship inside the APK (assets/models/*.bin, uncompressed). whisper.cpp needs a file
+ * Speech models ship inside the APK (assets/models/<name>.bin, uncompressed). whisper.cpp needs a file
  * path, so the chosen model is copied once to app storage; the copy is reused while its size matches.
  */
 object ModelStore {
