@@ -749,7 +749,7 @@ Q.forEach((s, i) => surahSel.add(new Option(`${AR(i + 1)}. ${s[0]}`, i + 1)));
    never grows above the top limit (S.top % of the stage, measured from the bottom): after rendering,
    the first token whose line crosses the limit cuts the page, so a long ayah continues on the next
    page. PE = where the next page starts (exclusive end), PE.w === 0 means whole ayahs only. */
-let PE = { a: 2, w: 0 };
+let PE = { a: 2, w: 0 }, LIMIT_H = 0;
 const pageEnd = () => (PE.w === 0 ? PE.a - 1 : PE.a);          // last ayah shown (maybe partial)
 const flatOf = (s, a, w) => {                                   // flat word index of (a, token w)
   const total = Q[s - 1][1].length;
@@ -770,7 +770,7 @@ function render() {
   S.a = Math.min(Math.max(1, S.a), total);
   const [name, verses] = Q[S.s - 1];
   if (S.w >= verses[S.a - 1].split(" ").length) S.w = 0;
-  const last = Math.min(total, S.a + S.per - 1);
+  const last = Math.min(total, S.a + Math.max(S.per, S.follow ? 2 : 1) - 1);
   let html = `<div class="head" id="phead"></div>`;
   if (S.a === 1 && S.w === 0 && S.s !== 1 && S.s !== 9) html += `<div class="basmala">${Q[0][1][0]}</div>`;
   for (let a = S.a; a <= last; a++) {
@@ -780,7 +780,7 @@ function render() {
   }
   const box = $("text"); box.innerHTML = html;
   // cut by rendered lines: the first token whose line crosses the limit starts the next page
-  const limit = $("stage").clientHeight * (S.top - S.offset) / 100 - 4;
+  const limit = LIMIT_H = $("stage").clientHeight * (S.top - S.offset) / 100 - 4;
   PE = { a: last + 1, w: 0 };
   if (box.scrollHeight > limit) {
     const toks = box.querySelectorAll(".w, .t");
@@ -815,10 +815,35 @@ function pageBefore(C) {
   while (lo <= hi) { const mid = (lo + hi) >> 1; if (reach(mid)) { best = mid; hi = mid - 1; } else lo = mid + 1; }
   const t = tokenOf(s, best); S.a = t.a; S.w = t.w; render();
 }
-/* Page so that flat word i is visible, starting from the beginning of its ayah. */
-function pageContaining(i) {
-  const p = Engine.pos(i); S.s = p.s; S.a = p.a; S.w = 0; render();
-  for (let n = 0; n < 50 && pageEndFlat() <= i && PE.a <= Q[S.s - 1][1].length; n++) { S.a = PE.a; S.w = PE.w; render(); }
+/* ---------- sliding window (follow mode) ----------
+   While following the recitation, the window must always satisfy two rules:
+     1. the current word sits in the upper half of the text area (under the top limit);
+     2. something to read next is visible below it: the start of the next ayah, or, when the current
+        ayah is longer than the window, the next lines of that ayah.
+   When either rule fails, the window is re-placed: it starts at the current ayah, and if that ayah is
+   too long, at the line that holds the current word. So the reader never reaches the bottom of the
+   window with nothing after it, and the window moves at most about once per half window. */
+const wordEl = i => $("text").querySelector(`.w[data-i="${i}"]`);
+function windowOk(i) {
+  const el = wordEl(i); if (!el) return false;
+  if (el.offsetTop > LIMIT_H / 2) return false;                                // rule 1: line starts in the upper half
+  const p = Engine.pos(i);
+  if (p.s !== S.s || p.a >= Q[S.s - 1][1].length) return true;                 // last ayah of the surah
+  if ($("text").querySelector(`.w[data-a="${p.a + 1}"]`)) return true;         // rule 2: next ayah visible
+  // rule 2 for an ayah too long to share the window with the next one: its following line must be visible
+  const tooLong = S.a === p.a && PE.a === p.a && PE.w > 0;
+  return tooLong && [...$("text").querySelectorAll(".w, .t")].some(tk => tk.offsetTop > el.offsetTop + 2);
+}
+function placeWindow(i) {
+  const p = Engine.pos(i);
+  S.s = p.s; S.a = p.a; S.w = 0; render();
+  // a long ayah: step through its chunks until the word is on screen
+  for (let n = 0; n < 50 && !wordEl(i) && PE.a === p.a && PE.w > 0; n++) { S.w = PE.w; render(); }
+  if (windowOk(i)) return;
+  const el = wordEl(i); if (!el) return;
+  // start the window at the line that holds the word, so it moves to the top with what follows below
+  const first = [...$("text").querySelectorAll(".w, .t")].find(tk => tk.offsetTop + tk.offsetHeight / 2 > el.offsetTop);
+  if (first && +first.dataset.a === p.a && +first.dataset.k > S.w) { S.w = +first.dataset.k; render(); }
 }
 
 /* ---------- voice tracking ---------- */
@@ -870,7 +895,7 @@ function resumeTracking() {
   const h = S.saved;
   if (h && Engine.pos(h.i).s === h.s) {
     S.s = h.s; S.a = h.a; S.w = h.w; render(); cursor = h.i; curIdx = h.i; miss = 0; gate.reset(); highlight();
-    if (!(curIdx >= pageStartFlat() && curIdx < pageEndFlat())) pageContaining(curIdx);
+    if (!windowOk(curIdx)) placeWindow(curIdx);
     toast(`استمر من سورة ${Q[S.s - 1][0]} · آية ${AR(Engine.pos(h.i).a)}`);
   } else toast("لا يوجد موضع محفوظ، أكمل من هنا");
   micStatus(listening ? "يستمع…" : "الصوت متوقف", listening ? "show" : "");
@@ -918,15 +943,12 @@ function setPos(i) {
   if (srv) serverCtx();
   const p = Engine.pos(i);
   if (p.s !== S.s) {
-    pageContaining(i);
+    placeWindow(i);
     if (!big) toast("سورة " + Q[p.s - 1][0]);
     return;
   }
   if (!S.follow) { highlight(); return; }
-  const total = Q[S.s - 1][1].length;
-  if (i < pageStartFlat() || i >= pageEndFlat()) pageContaining(i);                 // off the page: show it
-  // whole-ayah pages: when the recited ayah is the last one on the page, rebase so the next ayahs are visible
-  else if (PE.w === 0 && p.a === pageEnd() && p.a < total && (p.a !== S.a || S.w !== 0)) { S.a = p.a; S.w = 0; render(); }
+  if (!windowOk(i)) placeWindow(i);                     // keep the current word high with what follows visible
   else highlight();
 }
 

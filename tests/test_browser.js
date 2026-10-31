@@ -163,6 +163,53 @@ const t = (name, got, want) => {
     t("Backspace undoes the surah jump", await p.evaluate(() => S.s), 1);
     t("ارجع as recitation is not a command", await p.evaluate(() => { QuranGlasses.goto(12, 50); const c = cursor; QuranGlasses.hear("ارجع إلى ربك"); return S.s === 12 && cursor > c; }), true);
     await p.evaluate(() => { QuranGlasses.goto(1, 1); });
+    // sliding window: reciting the last visible ayah must bring the next ayah into view before that ayah ends,
+    // and inside a long ayah the following lines stay visible; always under the top limit
+    const slide = await p.evaluate(() => {
+      const plain = (s, a) => Engine.norm(Q[s - 1][1][a - 1]).split(" ").filter(Boolean);
+      const under = () => { const st = document.getElementById("stage").getBoundingClientRect(), tx = document.getElementById("text").getBoundingClientRect(); return tx.top >= st.bottom - st.height * S.top / 100 - 1; };
+      const out = {};
+      Object.assign(S, LOOK_DEFAULTS); S.top = 55; S.follow = true; applyLook(); QuranGlasses.goto(2, 6); resync();
+      const L = pageEnd();                                   // last ayah visible on the page
+      out.nextHiddenBefore = !document.querySelector(`.w[data-a="${L + 1}"]`);
+      const words = plain(2, L);
+      QuranGlasses.hear(words.slice(0, 3).join(" "));        // only the first words of that ayah
+      out.cur = document.querySelector(".ay.cur")?.dataset.a == L;
+      out.nextShownEarly = !!document.querySelector(`.w[data-a="${L + 1}"]`);
+      out.curInUpperHalf = (() => { const w = document.querySelector(".w.now"); return !!w && w.offsetTop <= LIMIT_H / 2; })();
+      out.under1 = under();
+      // long ayah (Ayat al-Kursi, large font): walk through it 4 words at a time
+      document.body.classList.add("focus-mode");           // glasses mode: the real reading layout
+      S.size = 60; applyLook(); QuranGlasses.goto(2, 255); resync();
+      const k = plain(2, 255); let ok = true, moves = 0, lastStart = `${S.a}:${S.w}`;
+      for (let j = 0; j + 4 <= k.length; j += 4) {
+        QuranGlasses.hear(k.slice(j, j + 4).join(" "));
+        const w = document.querySelector(".w.now"); if (!w) { ok = false; break; }
+        const below = [...document.querySelectorAll("#text .w, #text .t")].some(t => t.offsetTop > w.offsetTop + 2) || !!document.querySelector('.w[data-a="256"]');
+        if (!below || !under() || w.offsetTop > LIMIT_H / 2) { ok = false; out.failAt = j; break; }
+        if (`${S.a}:${S.w}` !== lastStart) { moves++; lastStart = `${S.a}:${S.w}`; }
+      }
+      out.longOk = ok; out.longMoves = moves; out.longSteps = Math.floor(k.length / 4);
+      QuranGlasses.hear(k.slice(-4).join(" "));
+      out.after255NextVisible = !!document.querySelector('.w[data-a="256"]');
+      document.body.classList.remove("focus-mode");
+      Object.assign(S, LOOK_DEFAULTS); S.top = 90; applyLook(); QuranGlasses.goto(1, 1);
+      return out;
+    });
+    t("sliding: next ayah hidden at first", slide.nextHiddenBefore, true);
+    t("sliding: reciting the last visible ayah shows the next one early", [slide.cur, slide.nextShownEarly], [true, true]);
+    t("sliding: current word in the upper half, under the top limit", [slide.curInUpperHalf, slide.under1], [true, true]);
+    t("sliding: long ayah always shows the following lines", [slide.longOk, slide.failAt], [true, undefined]);
+    t("sliding: long ayah moves by lines, not on every update", slide.longMoves > 0 && slide.longMoves < slide.longSteps, true);
+    t("sliding: end of a long ayah shows the next ayah", slide.after255NextVisible, true);
+    // manual paging still works and tracking continues from the new page
+    const manual = await p.evaluate(() => {
+      QuranGlasses.goto(2, 1); resync(); page(1); const start = S.a;
+      const words = Engine.norm(Q[1][1][start - 1]).split(" ").filter(Boolean);
+      QuranGlasses.hear(words.slice(0, 3).join(" "));
+      return [start > 1, document.querySelector(".ay.cur")?.dataset.a == start];
+    });
+    t("sliding: manual page then tracking continues there", manual, [true, true]);
     t("no page errors", errs.length, 0);
     await p.close();
   }
