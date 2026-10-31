@@ -11,5 +11,8 @@ CLI=$(find "$B" -type f -name whisper-cli | head -1)
 for m in "$HERE"/build-assets/models/*.bin; do
     echo "=== $(basename "$m") ($(stat -c %s "$m") bytes)"
     head -c 4 "$m" | od -An -tx1
-    "$CLI" -m "$m" -f "$WHISPER/samples/jfk.wav" -l ar -t 4 -np -ml 1 -sow 2>&1 | tail -20
+    out=$("$CLI" -m "$m" -f "$WHISPER/samples/jfk.wav" -l ar -t 4 -ml 1 -sow 2>&1) || { echo "$out" | tail -40; exit 1; }
+    words=$(echo "$out" | grep -c '^\[' || true)
+    load=$(echo "$out" | grep -E "n_vocab|n_text_ctx|type +=|model size|load time" | tr '\n' ' ' | tr -s ' ')
+    echo "::notice title=$(basename "$m") loads::$words timed words on the sample · $load"
 done

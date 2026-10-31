@@ -34,6 +34,15 @@ for f in ("vocab.json", "added_tokens.json"):
     else:   # same tokenizer as the multilingual base model
         shutil.copy(hf_hub_download("openai/whisper-base", f), p)
     print("filled", f)
+# the converter writes config["max_length"] as the decoder text context; fine-tunes often set it to the
+# generation length (e.g. 225) while the decoder position table has max_target_positions (448) rows, which
+# whisper.cpp then rejects as a wrongly shaped tensor. Use the real table size.
+cp = os.path.join(out, "config.json")
+cfg = json.load(open(cp, encoding="utf8"))
+if cfg.get("max_length") != cfg["max_target_positions"]:
+    print("max_length", cfg.get("max_length"), "->", cfg["max_target_positions"])
+    cfg["max_length"] = cfg["max_target_positions"]
+    json.dump(cfg, open(cp, "w", encoding="utf8"), indent=1)
 PY
     python3 "$WHISPER/models/convert-h5-to-ggml.py" "$dir" "$WORK/openai-whisper" "$dir"
     "$QUANT" "$dir/ggml-model.bin" "$OUT/ggml-quran-$name.bin" "$qtype"
