@@ -17,10 +17,10 @@ data/quran.json       Uthmani text, 114 surahs / 6236 ayahs (npm quran-json@3.1.
 assets/               Amiri Quran woff2 (SIL OFL), app icons, vendored Azure Speech SDK (MIT)
 build.py              builds dist/ (standard library only)
 tests/test_engine.js  56 matcher tests against the real text (node, no deps)
-tests/test_viture.js  38 IMU driver tests: byte-exact frames, quaternion → head angle (node, no deps)
+tests/test_viture.js  45 IMU driver tests: byte-exact frames, quaternion → head angle (node, no deps)
 tests/test_server.py  21 checks of the self-hosted ASR server's streaming policy and protocol (python, numpy + websockets)
 server/               self-hosted Quran ASR server (faster-whisper + websockets), Docker + Caddy, Oracle setup guide
-tests/test_browser.js 60 end-to-end tests, desktop + emulated phone (needs playwright)
+tests/test_browser.js 64 end-to-end tests, desktop + emulated phone (needs playwright)
 dist/                 build output (committed so GitHub Pages can serve dist/app)
 ```
 
@@ -65,7 +65,7 @@ Outputs:
 
 ## Not done / open items (priority order)
 
-1. ~~Host the PWA on GitHub Pages.~~ **Done (2026-10-29).** Private repo `Salaam-8/quran-glasses`, published by `.github/workflows/pages.yml` (Pages source = GitHub Actions) on every push to `main`. Live: https://salaam-8.github.io/quran-glasses/ ; manifest and sw.js verified 200 in Chrome. Bump `CACHE` in `build.py` on every deploy (now v20).
+1. ~~Host the PWA on GitHub Pages.~~ **Done (2026-10-29).** Private repo `Salaam-8/quran-glasses`, published by `.github/workflows/pages.yml` (Pages source = GitHub Actions) on every push to `main`. Live: https://salaam-8.github.io/quran-glasses/ ; manifest and sw.js verified 200 in Chrome. Bump `CACHE` in `build.py` on every deploy (now v21).
 2. **Glasses IMU: implemented, needs a real-device check.** `src/viture.js` talks to the glasses over WebHID
    without the vendor SDK (its browser build has no public download). Protocol sources:
    - Gen2 / Pro 2 (`35CA:1301`): https://github.com/elasticjava/viture-v2/blob/main/PROTOCOL.md — one HID interface,
@@ -79,6 +79,15 @@ Outputs:
    `nodPitch(q, nod)` is the twist about that axis since the reference (0 = qiyam, negative = head down). This is
    frame-agnostic and immune to turning and to yaw drift (unit tests: turn 80° then nod 25° → −25°). Stored in
    `localStorage` as `S.nod`; «معايرة وضع القيام» afterwards only re-captures the reference pose.
+   **Prostration passes vertical (2026-10-31).** With forehead and nose on the floor the face points down and the chin
+   tucks toward the knees, so the head is ~100–120° below looking ahead (ruku ~70–90°). No published measurement of
+   head angle in sujood was found; this is from posture geometry, and the live angle readout can confirm it. Euler
+   up/down angles cannot pass ±90°: past vertical they fold back while the other two jump by 180°. The old Euler teach-in
+   (pick the angle that moved most) then learned the jumping axis, so ruku read 0° and the text never hid. Fix:
+   `gen1Parse` also returns `qd` (ZYX quaternion: roll = −raw1, pitch = raw2, yaw = −raw0, as in the community driver);
+   `learnNod` / `nodPitch` use `q || qd`, which is continuous through vertical. Saved Euler teach-ins (`kind: "e"`) are
+   dropped on load and the app asks once to redo the teach-in. Gauge and simulation slider now reach −140°.
+   Tests reproduce the fold (teach-in at −115° → ruku −80, sujood −115, deep −130) and the old failure.
    **The user's glasses enumerate as a Gen1 device** (name shows «VITURE Pro», not «Pro 2»): Gen1 PID, `0xFF 0xFC`
    Euler frames, no quaternion. So the teach-in also has a Euler mode (`kind: "e"`): it picks the Euler angle that moved
    most between the two poses, signed so head-down is negative, with the reference value as zero. The status line now

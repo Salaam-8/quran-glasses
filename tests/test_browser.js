@@ -210,6 +210,37 @@ const t = (name, got, want) => {
       return [start > 1, document.querySelector(".ay.cur")?.dataset.a == start];
     });
     t("sliding: manual page then tracking continues there", manual, [true, true]);
+    // Gen1 glasses (Euler frames): teach-in done in a real prostration (past vertical) must still hide at ruku
+    const g1 = await p.evaluate(async () => {
+      const D = Math.PI / 180;
+      const q2zyx = ([w, x, y, z]) => ({ roll: Math.atan2(2 * (w * x + y * z), 1 - 2 * (x * x + y * y)) / D, pitch: Math.asin(Math.max(-1, Math.min(1, 2 * (w * y - z * x)))) / D, yaw: Math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z)) / D });
+      const feed = deg => { const e = q2zyx([Math.cos(deg * D / 2), 0, Math.sin(deg * D / 2), 0]);
+        const f = new Uint8Array(64); f[0] = 0xff; f[1] = 0xfc;
+        [-e.yaw, -e.roll, e.pitch].forEach((v, i) => { const le = new Uint8Array(new Float32Array([v]).buffer); f.set(le.slice().reverse(), 18 + 4 * i); });
+        const imu = QuranGlasses.imu; imu.gen = 1; imu.devices = [{ opened: true, productId: 0x101d }]; imu._onReport({ data: new DataView(f.buffer) }); };
+      const wait = ms => new Promise(r => setTimeout(r, ms));
+      document.body.classList.add("focus-mode"); applyHide();
+      feed(0); document.getElementById("learn").click(); await wait(1200);
+      feed(-115); await wait(3400);                                  // countdown ends in prostration
+      const learned = [S.axis, S.nod && S.nod.kind, Math.round(S.nod && S.nod.angle)];
+      for (let k = 0; k < 6; k++) { feed(0); await wait(120); }
+      const qiyam = document.getElementById("text").classList.contains("off");
+      for (let k = 0; k < 6; k++) { feed(-80); await wait(120); }
+      const ruku = document.getElementById("text").classList.contains("off");
+      for (let k = 0; k < 6; k++) { feed(-120); await wait(120); }
+      const sujood = [document.getElementById("text").classList.contains("off"), document.getElementById("pitchv").textContent];
+      document.getElementById("calib").click();                     // calibrate while still down: reference moves
+      for (let k = 0; k < 6; k++) { feed(0); await wait(120); }
+      document.getElementById("calib").click();                     // recalibrate at qiyam
+      for (let k = 0; k < 6; k++) { feed(0); await wait(120); }
+      const back = document.getElementById("text").classList.contains("off");
+      document.body.classList.remove("focus-mode"); S.nod = null; S.axis = "gaze"; applyLook(); onPitch(-15, "محاكاة");
+      return { learned, qiyam, ruku, sujood, back };
+    });
+    t("gen1 teach-in past vertical learns a quaternion axis", g1.learned, ["learned", "q", 115]);
+    t("gen1: qiyam shows, ruku and sujood hide", [g1.qiyam, g1.ruku, g1.sujood[0]], [false, true, true]);
+    t("gen1: sujood reads past -90°", g1.sujood[1], "-120°");
+    t("gen1: qiyam calibration works with Euler glasses", g1.back, false);
     t("no page errors", errs.length, 0);
     await p.close();
   }

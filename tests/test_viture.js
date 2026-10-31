@@ -67,19 +67,42 @@ function gen1Frame(a, b, c) {
   [a, b, c].forEach((v, i) => { const le = new Uint8Array(new Float32Array([v]).buffer); f.set(le.slice().reverse(), 18 + 4 * i); });
   return f;
 }
-// ---- learned nod on euler-only (Gen1) samples ----
+// ---- learned nod on Gen1 (Euler) samples: done on the derived quaternion ----
 {
-  const A = V.gen1Parse(gen1Frame(100, 5, -2)), B = V.gen1Parse(gen1Frame(100, 7, -48));   // raw2 (x) drops by 46°
+  const A = V.gen1Parse(gen1Frame(0, 5, -2)), B = V.gen1Parse(gen1Frame(0, 5, -48));      // raw2 drops by 46°
   const nod = V.learnNod(A, B);
-  t("euler nod picks the moving angle", [nod.kind, nod.axis, nod.inv], ["e", "x", false]);
-  near("euler nod angle", nod.angle, 46);
-  near("euler nod at reference", V.nodPitch(A, nod), 0, 1e-6);
-  near("euler nod head down", V.nodPitch(B, nod), -46);
-  near("euler nod turned (z moves)", V.nodPitch(V.gen1Parse(gen1Frame(170, 5, -2)), nod), 0, 1e-6);
-  const up = V.learnNod(A, V.gen1Parse(gen1Frame(100, 5, 40)));                           // opposite sign convention
-  near("euler nod inverted convention", V.nodPitch(V.gen1Parse(gen1Frame(100, 5, 40)), up), -42);
-  near("euler nod wraps around 180", V.nodPitch(V.gen1Parse(gen1Frame(100, 5, 350)), nod), -8);
-  near("headPitch learned euler", V.headPitch(B, "learned", false, nod), -46);
+  t("gen1 nod uses the quaternion", nod.kind, "q");
+  near("gen1 nod angle", nod.angle, 46, 0.5);
+  near("gen1 nod at reference", V.nodPitch(A, nod), 0, 1e-6);
+  near("gen1 nod head down", V.nodPitch(B, nod), -46, 0.5);
+  near("gen1 nod ignores turning (raw0 moves 70°)", V.nodPitch(V.gen1Parse(gen1Frame(70, 5, -2)), nod), 0, 3);
+  near("headPitch learned gen1", V.headPitch(B, "learned", false, nod), -46, 0.5);
+  // legacy Euler teach-in object still evaluates (saved by older versions)
+  const legacy = { kind: "e", axis: "x", inv: false, angle: 46, ref: -2 };
+  near("legacy euler nod still readable", V.nodPitch(B, legacy), -46, 1e-6);
+}
+
+// ---- prostration goes past vertical: Euler folds, the quaternion does not ----
+{
+  const D = Math.PI / 180;
+  const q2zyx = ([w, x, y, z]) => ({ roll: Math.atan2(2 * (w * x + y * z), 1 - 2 * (x * x + y * y)) / D,
+    pitch: Math.asin(Math.max(-1, Math.min(1, 2 * (w * y - z * x)))) / D, yaw: Math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z)) / D });
+  const nodQ = deg => [Math.cos(deg * D / 2), 0, Math.sin(deg * D / 2), 0];
+  const frameOf = q => { const e = q2zyx(q); return V.gen1Parse(gen1Frame(-e.yaw, -e.roll, e.pitch)); };
+  const A = frameOf(nodQ(0)), S115 = frameOf(nodQ(-115));
+  t("euler really folds past vertical", Math.round(S115.euler.x), -65);
+  const nod = V.learnNod(A, S115);                         // teach-in done in a real prostration
+  near("teach-in past vertical: angle", nod.angle, 115, 0.5);
+  near("teach-in past vertical: ruku (-80) reads -80", V.nodPitch(frameOf(nodQ(-80)), nod), -80, 0.5);
+  near("teach-in past vertical: sujood (-115) reads -115", V.nodPitch(S115, nod), -115, 0.5);
+  near("teach-in past vertical: deep sujood (-130) reads -130", V.nodPitch(frameOf(nodQ(-130)), nod), -130, 0.5);
+  near("teach-in past vertical: qiyam reads 0", V.nodPitch(A, nod), 0, 1e-6);
+  const shallow = V.learnNod(A, frameOf(nodQ(-60)));       // teach-in with only a slight bow
+  near("shallow teach-in still reads sujood correctly", V.nodPitch(S115, shallow), -115, 0.5);
+  // the old Euler method failed here: it learned the axis that jumped by 180°
+  let old = null;
+  for (const k of ["x", "y", "z"]) { let d = S115.euler[k] - A.euler[k]; d = ((d + 540) % 360) - 180; if (!old || Math.abs(d) > old.angle) old = { kind: "e", axis: k, inv: d > 0, angle: Math.abs(d), ref: A.euler[k] }; }
+  near("old method would read ruku as 0 (the bug)", V.nodPitch(frameOf(nodQ(-80)), old), 0, 0.5);
 }
 
 // ---- Gen1 frames ----

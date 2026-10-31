@@ -53,13 +53,22 @@ const VitureIMU = (() => {
     return p;
   }
   const gen1ImuCommand = on => gen1Command(0x15, new Uint8Array([on ? 1 : 0]));
+  function zyxToQuat(roll, pitch, yaw) {
+    const r = roll / DEG / 2, p = pitch / DEG / 2, y = yaw / DEG / 2;
+    const cr = Math.cos(r), sr = Math.sin(r), cp = Math.cos(p), sp = Math.sin(p), cy = Math.cos(y), sy = Math.sin(y);
+    return [cr * cp * cy + sr * sp * sy, sr * cp * cy - cr * sp * sy, cr * sp * cy + sr * cp * sy, cr * cp * sy - sr * sp * cy];
+  }
   function gen1Parse(b) {
     if (b.length < 30 || b[0] !== 0xff || b[1] !== 0xfc) return null;
     const f = o => new DataView(new Uint8Array([b[o + 3], b[o + 2], b[o + 1], b[o]]).buffer).getFloat32(0, true);
     const a = f(18), m = f(22), c = f(26);
     if (![a, m, c].every(v => isFinite(v) && Math.abs(v) <= 360)) return null;
     // Gen1 sends euler degrees; the community driver reports raw2 (c) as the head up/down angle.
-    return { type: "euler", euler: { x: c, y: m, z: a }, pitch: c };
+    // The up/down angle cannot pass ±90° in Euler form: past vertical (prostration is ~100–120° below
+    // looking ahead) it folds back while the other two jump by 180°. qd is the same orientation as a
+    // quaternion (ZYX, roll = −raw1, pitch = raw2, yaw = −raw0, as in the community WebHID driver),
+    // which is continuous through vertical; the teach-in works on it.
+    return { type: "euler", euler: { x: c, y: m, z: a }, pitch: c, qd: zyxToQuat(-m, c, -a) };
   }
 
   /* ---------- angles ---------- */
@@ -90,7 +99,7 @@ const VitureIMU = (() => {
   // axis is taken from the body-frame rotation between them, so no assumption about which device
   // axis is up or forward. Returns { ref, n, angle } or null when the move was too small.
   function learnNod(a, b) {
-    const qA = a.q || (Array.isArray(a) ? a : null), qB = b.q || (Array.isArray(b) ? b : null);
+    const qA = a.q || a.qd || (Array.isArray(a) ? a : null), qB = b.q || b.qd || (Array.isArray(b) ? b : null);
     if (qA && qB) {
       const d = quatMul(quatConj(qA), qB), s = d[0] < 0 ? -1 : 1;
       const v = [d[1] * s, d[2] * s, d[3] * s], m = Math.hypot(v[0], v[1], v[2]);
@@ -98,7 +107,8 @@ const VitureIMU = (() => {
       if (m < 1e-6) return null;
       return { kind: "q", ref: qA, n: v.map(x => x / m), angle };
     }
-    // Euler-only devices (Gen1 frames): pick the angle that moved most, signed so that head-down is negative.
+    // Legacy (samples without a quaternion): pick the angle that moved most, signed so head-down is negative.
+    // Only valid while the nod stays within ±90°; kept so teach-ins saved by older versions keep working.
     if (!a.euler || !b.euler) return null;
     let best = null;
     for (const k of ["x", "y", "z"]) {
@@ -115,7 +125,7 @@ const VitureIMU = (() => {
       let d = sample.euler[nod.axis] - nod.ref; d = ((d + 540) % 360) - 180;
       return nod.inv ? -d : d;
     }
-    const q = sample.q || sample;
+    const q = sample.q || sample.qd || sample;
     const d = quatMul(quatConj(nod.ref), q), s = d[0] < 0 ? -1 : 1;
     const dot = (d[1] * nod.n[0] + d[2] * nod.n[1] + d[3] * nod.n[2]) * s;
     return -2 * Math.atan2(dot, d[0] * s) * DEG;
@@ -188,6 +198,6 @@ const VitureIMU = (() => {
     }
   }
 
-  return { VENDOR_ID, NAMES, supported, Session, euler, gazePitch, headPitch, learnNod, nodPitch, quatMul, quatConj, gen2Frame, gen2ImuCommand, gen2Parse, gen1Command, gen1ImuCommand, gen1Parse, crc16 };
+  return { VENDOR_ID, NAMES, supported, Session, euler, gazePitch, headPitch, learnNod, nodPitch, quatMul, quatConj, zyxToQuat, gen2Frame, gen2ImuCommand, gen2Parse, gen1Command, gen1ImuCommand, gen1Parse, crc16 };
 })();
 if (typeof module !== "undefined") module.exports = VitureIMU;
