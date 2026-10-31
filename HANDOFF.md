@@ -100,6 +100,18 @@ android/
   `.github/workflows/android.yml` (models cached by script hash), which publishes it as the `android-latest`
   pre-release. Local: `python3 build.py && android/scripts/fetch-whisper.sh && android/scripts/build-models.sh &&
   cd android && ./gradlew :app:assembleRelease` (release is signed with the debug key for sideloading).
+- **Status 2026-10-31 (CI run 5):** green end to end. Both models convert and load in whisper.cpp
+  (`scripts/verify-models.sh` posts a notice per model: base q5_1 59 MB, tiny q8_0 43 MB, n_text_ctx 448). On an
+  API 34 x86_64 emulator all 4 instrumentation tests pass, including loading the base model and decoding audio on
+  device. APK 0.1.5 (111 MB: two models, arm64 + x86_64) is the `android-latest` pre-release:
+  https://github.com/Salaam-8/quran-glasses/releases/tag/android-latest
+- **Conversion gotcha (fixed):** `convert-h5-to-ggml.py` writes `config.max_length` as the decoder text context.
+  The tarteel fine-tunes set it to the generation length, not the 448-row position table, and whisper.cpp rejected
+  the file ("failed to initialize whisper context"). build-models.sh now sets `max_length = max_target_positions`.
+- **CI debugging from Claude's sandbox:** raw Actions logs are not reachable, but `scripts/ci-run.sh` turns failures
+  into check-run annotations: `gh api repos/Salaam-8/quran-glasses/check-runs/<job id>/annotations`. whisper.cpp
+  logs are also captured in-app (`WhisperNative.lastLog()`) and included in the model load error.
+- **Size:** most of the APK is the two models; ABI splits or shipping one model would roughly halve it.
 - **Not yet known:** real-time factor of whisper-base on the target glasses' SoC (step 1 s, buffer 8 s), and
   recognition accuracy offline vs Google. Knobs: model (`QGNative.setModel("ggml-quran-tiny.bin")`), `step`,
   `maxBuffer` in StreamingSession, `audio_ctx` in qg_whisper.cpp.
